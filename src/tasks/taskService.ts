@@ -41,6 +41,10 @@ export class TaskService {
     this.markers = new TaskMarkers(components, world, (taskId) => {
       void this.selectTask(taskId);
     });
+
+    const highlighter = components.get(OBF.Highlighter);
+    highlighter.events.select.onHighlight.add(() => this.notify());
+    highlighter.events.select.onClear.add(() => this.notify());
   }
 
   get tasks() {
