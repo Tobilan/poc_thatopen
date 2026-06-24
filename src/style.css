@@ -202,6 +202,7 @@ bim-grid[floating] .dashboard-card {
 .task-list__content,
 .task-list__actions,
 .task-panel__header,
+.task-panel__header-actions,
 .task-form__actions,
 .task-form__choices {
   display: flex;
@@ -218,6 +219,10 @@ bim-grid[floating] .dashboard-card {
 .task-panel__header {
   align-items: center;
   justify-content: space-between;
+}
+
+.task-panel__header-actions {
+  align-items: center;
 }
 
 .task-panel__model,

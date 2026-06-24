@@ -43,10 +43,11 @@ export const modelsPanelTemplate: BUI.StatefullComponent<ModelsPanelState> = (
         const bytes = new Uint8Array(buffer);
         const hash = await getModelHash(bytes);
         const model = await ifcLoader.load(bytes, true, getModelId(file.name, hash));
-        tasks.registerModel({
+        await tasks.registerModel({
           modelId: model.modelId,
           modelHash: hash,
           label: file.name,
+          ifcSource: bytes,
         });
         BUI.ContextMenu.removeMenus();
       } finally {
@@ -76,7 +77,7 @@ export const modelsPanelTemplate: BUI.StatefullComponent<ModelsPanelState> = (
         const model = await fragments.core.load(bytes, {
           modelId: getModelId(file.name, hash),
         });
-        tasks.registerModel({
+        await tasks.registerModel({
           modelId: model.modelId,
           modelHash: hash,
           label: file.name,

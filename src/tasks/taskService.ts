@@ -1,5 +1,6 @@
 import * as OBC from "@thatopen/components";
 import * as OBF from "@thatopen/components-front";
+import { exportTasksToIfc, importTasksFromIfc } from "./ifcRoundtrip";
 import { TaskMarkers } from "./taskMarkers";
 import { TaskStore } from "./taskStore";
 import { RobotTask, RobotTaskDraft, RobotTaskUpdate } from "./taskTypes";
@@ -8,6 +9,13 @@ export type TaskModelContext = {
   modelId: string;
   modelHash: string;
   label: string;
+  ifcSource?: Uint8Array;
+};
+
+export type IfcTaskExport = {
+  bytes: Uint8Array;
+  fileName: string;
+  taskCount: number;
 };
 
 type StoredTask = {
@@ -67,17 +75,35 @@ export class TaskService {
     return Boolean(modelId && this.contexts.has(modelId));
   }
 
+  get canExportActiveIfc() {
+    if (!this.activeModelId || !this.tasks.length) return false;
+    return Boolean(this.contexts.get(this.activeModelId)?.ifcSource);
+  }
+
   subscribe(listener: () => void) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  registerModel(context: TaskModelContext) {
+  async registerModel(context: TaskModelContext) {
     this.contexts.set(context.modelId, context);
     this.activeModelId = context.modelId;
     this.selectedTaskId = null;
     try {
-      this.tasksByModelId.set(context.modelId, this.store.get(context.modelHash));
+      let tasks = this.store.get(context.modelHash);
+      if (!tasks.length && context.ifcSource) {
+        const ifcLoader = this.components.get(OBC.IfcLoader);
+        const imported = await importTasksFromIfc(
+          ifcLoader,
+          context.ifcSource,
+          context.modelId,
+        );
+        if (imported.length) {
+          this.store.replace(context.modelHash, imported);
+          tasks = imported;
+        }
+      }
+      this.tasksByModelId.set(context.modelId, tasks);
       this.error = null;
     } catch (error) {
       this.tasksByModelId.set(context.modelId, []);
@@ -85,6 +111,35 @@ export class TaskService {
     }
     this.refreshMarkers();
     this.notify();
+  }
+
+  async exportActiveIfc(): Promise<IfcTaskExport> {
+    if (!this.activeModelId) throw new TaskServiceError("No model is active.");
+    const context = this.contexts.get(this.activeModelId);
+    if (!context?.ifcSource) {
+      throw new TaskServiceError("Only IFC imports can be exported as IFC files.");
+    }
+    const tasks = this.tasksByModelId.get(context.modelId) ?? [];
+    if (!tasks.length) throw new TaskServiceError("There are no robot tasks to export.");
+
+    const result = await exportTasksToIfc(
+      this.components.get(OBC.IfcLoader),
+      context.ifcSource,
+      tasks,
+    );
+    if (!result.taskCount) {
+      throw new TaskServiceError(
+        "No task could be linked to an IFC element during export.",
+      );
+    }
+    this.error = null;
+    this.notify();
+    const baseName = context.label.replace(/\.ifc$/i, "");
+    return {
+      bytes: result.bytes,
+      fileName: `${baseName}-robot-tasks.ifc`,
+      taskCount: result.taskCount,
+    };
   }
 
   unregisterModel(modelId: string) {

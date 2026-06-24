@@ -125,6 +125,23 @@ export const tasksPanelTemplate: BUI.StatefullComponent<TasksPanelState> = (
     }
   };
 
+  const onExportIfc = async () => {
+    try {
+      const exported = await service.exportActiveIfc();
+      const blob = new Blob([exported.bytes], { type: "application/x-step" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = exported.fileName;
+      link.click();
+      URL.revokeObjectURL(url);
+      controller.message = `${exported.taskCount} task(s) exported to ${exported.fileName}.`;
+      update();
+    } catch (error) {
+      showError(error);
+    }
+  };
+
   const formVisible = controller.creating || controller.editingTaskId !== null;
   const selectedTask = service.selectedTask;
   const message = controller.message ?? service.error;
@@ -134,7 +151,10 @@ export const tasksPanelTemplate: BUI.StatefullComponent<TasksPanelState> = (
       <div class="task-panel">
         <div class="task-panel__header">
           <span class="task-panel__model">${service.activeModelLabel ?? "No model loaded"}</span>
-          <bim-button style="flex: 0" label="Add task" icon=${appIcons.ADD} ?disabled=${!service.canCreateTask} @click=${onStartCreate}></bim-button>
+          <div class="task-panel__header-actions">
+            <bim-button style="flex: 0" label="Export IFC" icon=${appIcons.EXPORT} ?disabled=${!service.canExportActiveIfc} @click=${onExportIfc}></bim-button>
+            <bim-button style="flex: 0" label="Add task" icon=${appIcons.ADD} ?disabled=${!service.canCreateTask} @click=${onStartCreate}></bim-button>
+          </div>
         </div>
         ${message
           ? BUI.html`<p class="task-panel__message">${message}</p>`

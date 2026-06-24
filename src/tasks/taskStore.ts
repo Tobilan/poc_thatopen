@@ -133,6 +133,13 @@ export class TaskStore {
     this.write(modelHash, { version: 1, tasks: nextTasks });
   }
 
+  replace(modelHash: string, tasks: RobotTask[]): void {
+    if (!tasks.every(isRobotTask)) {
+      throw new TaskStorageError("Imported IFC task data is invalid.");
+    }
+    this.write(modelHash, { version: 1, tasks });
+  }
+
   private read(modelHash: string): TaskEnvelope {
     let serialized: string | null;
     try {
