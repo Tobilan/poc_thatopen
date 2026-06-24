@@ -1,6 +1,13 @@
 import * as OBC from "@thatopen/components";
 import * as WEBIFC from "web-ifc";
-import { RobotTask, RobotTaskStatus, RobotTaskPriority } from "./taskTypes";
+import {
+  RobotAction,
+  RobotActionExecutionStatus,
+  RobotTask,
+  RobotTaskPriority,
+  RobotTaskStatus,
+  RobotTargetState,
+} from "./taskTypes";
 
 const TASK_PSET_NAME = "Pset_RobotTask";
 
@@ -22,6 +29,12 @@ type IfcExportResult = {
 
 const statuses: RobotTaskStatus[] = ["open", "in_progress", "done", "blocked"];
 const priorities: RobotTaskPriority[] = ["low", "medium", "high"];
+const targetStates: RobotTargetState[] = ["open", "closed", "on", "off"];
+const executionStatuses: RobotActionExecutionStatus[] = [
+  "not_executed",
+  "succeeded",
+  "failed",
+];
 
 const valueOf = (value: unknown) => {
   if (!value || typeof value !== "object") return undefined;
@@ -49,6 +62,30 @@ const getTaskProperties = (task: RobotTask) => {
   if (task.assignedRobot) properties.push(["AssignedRobot", task.assignedRobot]);
   if (task.markerPosition) {
     properties.push(["MarkerPosition", JSON.stringify(task.markerPosition)]);
+  }
+  if (task.action) {
+    properties.push(["ActionVerb", task.action.verb.toUpperCase()]);
+    properties.push(["TargetState", task.action.targetState.toUpperCase()]);
+    if (task.action.interactionPoint) {
+      properties.push([
+        "InteractionPoint",
+        JSON.stringify(task.action.interactionPoint),
+      ]);
+    }
+    properties.push([
+      "InteractionCoordinateReference",
+      task.action.coordinateReference.toUpperCase(),
+    ]);
+    properties.push([
+      "ExecutionStatus",
+      task.action.executionStatus.toUpperCase(),
+    ]);
+    if (task.action.observedState) {
+      properties.push(["ObservedState", task.action.observedState.toUpperCase()]);
+    }
+    if (task.action.executedAt) {
+      properties.push(["ExecutedAt", task.action.executedAt]);
+    }
   }
   return properties;
 };
@@ -203,6 +240,39 @@ const getMarkerPosition = (value: string | undefined) => {
   return undefined;
 };
 
+const getTargetState = (value: string | undefined) => {
+  if (!value) return undefined;
+  const state = value.toLowerCase() as RobotTargetState;
+  return targetStates.includes(state) ? state : undefined;
+};
+
+const getExecutionStatus = (value: string | undefined) => {
+  if (!value) return undefined;
+  const status = value.toLowerCase() as RobotActionExecutionStatus;
+  return executionStatuses.includes(status) ? status : undefined;
+};
+
+const getRobotAction = (properties: Map<string, string>) => {
+  const verb = properties.get("ActionVerb")?.toLowerCase();
+  const targetState = getTargetState(properties.get("TargetState"));
+  const executionStatus = getExecutionStatus(properties.get("ExecutionStatus"));
+  if (verb !== "set_state" || !targetState || !executionStatus) return undefined;
+
+  const action: RobotAction = {
+    verb: "set_state",
+    targetState,
+    coordinateReference: "viewer-local",
+    executionStatus,
+  };
+  const interactionPoint = getMarkerPosition(properties.get("InteractionPoint"));
+  const observedState = getTargetState(properties.get("ObservedState"));
+  const executedAt = properties.get("ExecutedAt");
+  if (interactionPoint) action.interactionPoint = interactionPoint;
+  if (observedState) action.observedState = observedState;
+  if (executedAt) action.executedAt = executedAt;
+  return action;
+};
+
 export const importTasksFromIfc = async (
   loader: OBC.IfcLoader,
   source: Uint8Array,
@@ -263,9 +333,11 @@ export const importTasksFromIfc = async (
         const description = properties.get("Description");
         const assignedRobot = properties.get("AssignedRobot");
         const markerPosition = getMarkerPosition(properties.get("MarkerPosition"));
+        const action = getRobotAction(properties);
         if (description) task.description = description;
         if (assignedRobot) task.assignedRobot = assignedRobot;
         if (markerPosition) task.markerPosition = markerPosition;
+        if (action) task.action = action;
         tasks.push(task);
       }
     }

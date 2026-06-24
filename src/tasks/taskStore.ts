@@ -1,8 +1,12 @@
 import {
   RobotTask,
+  RobotAction,
+  RobotActionDraft,
+  RobotActionExecutionStatus,
   RobotTaskDraft,
   RobotTaskPriority,
   RobotTaskStatus,
+  RobotTargetState,
   RobotTaskUpdate,
 } from "./taskTypes";
 
@@ -15,6 +19,12 @@ type TaskEnvelope = {
 
 const statuses: RobotTaskStatus[] = ["open", "in_progress", "done", "blocked"];
 const priorities: RobotTaskPriority[] = ["low", "medium", "high"];
+const targetStates: RobotTargetState[] = ["open", "closed", "on", "off"];
+const executionStatuses: RobotActionExecutionStatus[] = [
+  "not_executed",
+  "succeeded",
+  "failed",
+];
 
 const isString = (value: unknown): value is string => typeof value === "string";
 
@@ -24,6 +34,58 @@ const isPosition = (value: unknown): value is [number, number, number] => {
     value.length === 3 &&
     value.every((coordinate) => typeof coordinate === "number")
   );
+};
+
+const isRobotAction = (value: unknown): value is RobotAction => {
+  if (!value || typeof value !== "object") return false;
+  const action = value as Partial<RobotAction>;
+  return (
+    action.verb === "set_state" &&
+    targetStates.includes(action.targetState as RobotTargetState) &&
+    action.coordinateReference === "viewer-local" &&
+    executionStatuses.includes(
+      action.executionStatus as RobotActionExecutionStatus,
+    ) &&
+    (action.interactionPoint === undefined || isPosition(action.interactionPoint)) &&
+    (action.observedState === undefined ||
+      targetStates.includes(action.observedState as RobotTargetState)) &&
+    (action.executedAt === undefined || isString(action.executedAt))
+  );
+};
+
+const toRobotAction = (
+  action: RobotActionDraft,
+  interactionPoint?: [number, number, number],
+): RobotAction => {
+  if (action.verb !== "set_state") {
+    throw new TaskStorageError("The selected robot action is not supported.");
+  }
+  if (!targetStates.includes(action.targetState)) {
+    throw new TaskStorageError("A valid target state is required.");
+  }
+  if (!executionStatuses.includes(action.executionStatus)) {
+    throw new TaskStorageError("A valid execution status is required.");
+  }
+  if (
+    action.observedState !== undefined &&
+    !targetStates.includes(action.observedState)
+  ) {
+    throw new TaskStorageError("The observed state is invalid.");
+  }
+  if (action.executedAt && Number.isNaN(Date.parse(action.executedAt))) {
+    throw new TaskStorageError("Execution time must be an ISO 8601 date.");
+  }
+
+  const result: RobotAction = {
+    verb: action.verb,
+    targetState: action.targetState,
+    coordinateReference: "viewer-local",
+    executionStatus: action.executionStatus,
+  };
+  if (interactionPoint) result.interactionPoint = interactionPoint;
+  if (action.observedState) result.observedState = action.observedState;
+  if (action.executedAt) result.executedAt = action.executedAt;
+  return result;
 };
 
 const isRobotTask = (value: unknown): value is RobotTask => {
@@ -40,7 +102,8 @@ const isRobotTask = (value: unknown): value is RobotTask => {
     (task.description === undefined || isString(task.description)) &&
     (task.assignedRobot === undefined || isString(task.assignedRobot)) &&
     (task.relatedModelId === undefined || isString(task.relatedModelId)) &&
-    (task.markerPosition === undefined || isPosition(task.markerPosition))
+    (task.markerPosition === undefined || isPosition(task.markerPosition)) &&
+    (task.action === undefined || isRobotAction(task.action))
   );
 };
 
@@ -89,6 +152,9 @@ export class TaskStore {
     const assignedRobot = draft.assignedRobot?.trim();
     if (description) task.description = description;
     if (assignedRobot) task.assignedRobot = assignedRobot;
+    if (draft.action) {
+      task.action = toRobotAction(draft.action, markerPosition);
+    }
 
     const envelope = this.read(modelHash);
     envelope.tasks.push(task);
@@ -118,6 +184,16 @@ export class TaskStore {
     }
     if (update.status !== undefined) task.status = update.status;
     if (update.priority !== undefined) task.priority = update.priority;
+    if ("action" in update) {
+      if (update.action) {
+        task.action = toRobotAction(
+          update.action,
+          task.action?.interactionPoint ?? task.markerPosition,
+        );
+      } else {
+        delete task.action;
+      }
+    }
 
     task.updatedAt = new Date().toISOString();
     this.write(modelHash, envelope);

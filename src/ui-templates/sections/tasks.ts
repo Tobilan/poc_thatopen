@@ -2,13 +2,22 @@ import * as BUI from "@thatopen/ui";
 import { appIcons } from "../../globals";
 import { TaskService } from "../../tasks/taskService";
 import {
+  RobotActionDraft,
+  RobotActionExecutionStatus,
   RobotTask,
   RobotTaskDraft,
   RobotTaskPriority,
   RobotTaskStatus,
+  RobotTargetState,
 } from "../../tasks/taskTypes";
 
 type TaskForm = RobotTaskDraft;
+
+const defaultAction = (): RobotActionDraft => ({
+  verb: "set_state",
+  targetState: "closed",
+  executionStatus: "not_executed",
+});
 
 const defaultForm = (): TaskForm => ({
   title: "",
@@ -39,6 +48,15 @@ class TaskPanelController {
       status: task.status,
       priority: task.priority,
       assignedRobot: task.assignedRobot ?? "",
+      action: task.action
+        ? {
+            verb: task.action.verb,
+            targetState: task.action.targetState,
+            executionStatus: task.action.executionStatus,
+            observedState: task.action.observedState,
+            executedAt: task.action.executedAt,
+          }
+        : undefined,
     };
     this.editingTaskId = task.id;
     this.creating = false;
@@ -66,8 +84,15 @@ const statusOptions: RobotTaskStatus[] = [
 ];
 
 const priorityOptions: RobotTaskPriority[] = ["low", "medium", "high"];
+const targetStateOptions: RobotTargetState[] = ["open", "closed", "on", "off"];
+const executionStatusOptions: RobotActionExecutionStatus[] = [
+  "not_executed",
+  "succeeded",
+  "failed",
+];
 
 const readableStatus = (status: RobotTaskStatus) => status.replace("_", " ");
+const readableValue = (value: string) => value.replace(/_/g, " ");
 
 export const tasksPanelTemplate: BUI.StatefullComponent<TasksPanelState> = (
   state,
@@ -142,6 +167,58 @@ export const tasksPanelTemplate: BUI.StatefullComponent<TasksPanelState> = (
     }
   };
 
+  const setActionMode = ({ target }: { target: BUI.Dropdown }) => {
+    const [mode] = target.value;
+    controller.form.action = mode === "Set state" ? defaultAction() : undefined;
+    update();
+  };
+
+  const setTargetState = ({ target }: { target: BUI.Dropdown }) => {
+    const [targetState] = target.value;
+    const action = controller.form.action;
+    if (
+      !action ||
+      !targetStateOptions.includes(targetState as RobotTargetState)
+    ) {
+      return;
+    }
+    action.targetState = targetState as RobotTargetState;
+  };
+
+  const setExecutionStatus = ({ target }: { target: BUI.Dropdown }) => {
+    const [executionStatus] = target.value;
+    const action = controller.form.action;
+    if (
+      !action ||
+      !executionStatusOptions.includes(
+        executionStatus as RobotActionExecutionStatus,
+      )
+    ) {
+      return;
+    }
+    action.executionStatus = executionStatus as RobotActionExecutionStatus;
+    if (action.executionStatus === "not_executed") {
+      delete action.observedState;
+      delete action.executedAt;
+    } else if (!action.executedAt) {
+      action.executedAt = new Date().toISOString();
+    }
+    update();
+  };
+
+  const setObservedState = ({ target }: { target: BUI.Dropdown }) => {
+    const [observedState] = target.value;
+    const action = controller.form.action;
+    if (!action) return;
+    if (observedState === "Not recorded") {
+      delete action.observedState;
+      return;
+    }
+    if (targetStateOptions.includes(observedState as RobotTargetState)) {
+      action.observedState = observedState as RobotTargetState;
+    }
+  };
+
   const formVisible = controller.creating || controller.editingTaskId !== null;
   const selectedTask = service.selectedTask;
   const message = controller.message ?? service.error;
@@ -171,6 +248,39 @@ export const tasksPanelTemplate: BUI.StatefullComponent<TasksPanelState> = (
                 <bim-text-input vertical label="Assigned robot" .value=${controller.form.assignedRobot ?? ""} @input=${(event: Event) => {
                   controller.form.assignedRobot = (event.target as BUI.TextInput).value;
                 }}></bim-text-input>
+                <bim-dropdown label="Robot action" @change=${setActionMode}>
+                  <bim-option label="No action" ?checked=${!controller.form.action}></bim-option>
+                  <bim-option label="Set state" ?checked=${Boolean(controller.form.action)}></bim-option>
+                </bim-dropdown>
+                ${controller.form.action
+                  ? BUI.html`
+                      <div class="task-form__choices">
+                        <bim-dropdown label="Desired state" @change=${setTargetState}>
+                          ${targetStateOptions.map(
+                            (targetState) => BUI.html`<bim-option label=${targetState} ?checked=${controller.form.action?.targetState === targetState}></bim-option>`,
+                          )}
+                        </bim-dropdown>
+                        <bim-dropdown label="Execution result" @change=${setExecutionStatus}>
+                          ${executionStatusOptions.map(
+                            (executionStatus) => BUI.html`<bim-option label=${executionStatus} ?checked=${controller.form.action?.executionStatus === executionStatus}></bim-option>`,
+                          )}
+                        </bim-dropdown>
+                        <bim-dropdown label="Observed state" @change=${setObservedState}>
+                          <bim-option label="Not recorded" ?checked=${!controller.form.action?.observedState}></bim-option>
+                          ${targetStateOptions.map(
+                            (targetState) => BUI.html`<bim-option label=${targetState} ?checked=${controller.form.action?.observedState === targetState}></bim-option>`,
+                          )}
+                        </bim-dropdown>
+                      </div>
+                      <bim-text-input vertical label="Executed at (ISO 8601)" .value=${controller.form.action.executedAt ?? ""} @input=${(event: Event) => {
+                        const action = controller.form.action;
+                        if (!action) return;
+                        const value = (event.target as BUI.TextInput).value.trim();
+                        if (value) action.executedAt = value;
+                        else delete action.executedAt;
+                      }}></bim-text-input>
+                    `
+                  : undefined}
                 <div class="task-form__choices">
                   <bim-dropdown label="Status" @change=${({ target }: { target: BUI.Dropdown }) => {
                     const [status] = target.value;
@@ -213,6 +323,10 @@ export const tasksPanelTemplate: BUI.StatefullComponent<TasksPanelState> = (
                       <span>${readableStatus(task.status)} · ${task.priority}</span>
                       ${task.assignedRobot
                         ? BUI.html`<span>Robot: ${task.assignedRobot}</span>`
+                        : undefined}
+                      ${task.action
+                        ? BUI.html`<span>Action: ${readableValue(task.action.verb)} → ${task.action.targetState}</span>
+                            <span>Execution: ${readableValue(task.action.executionStatus)}</span>`
                         : undefined}
                       <code>${task.relatedElementGlobalId}</code>
                     </div>
