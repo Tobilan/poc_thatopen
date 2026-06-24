@@ -22,7 +22,9 @@ type IfcLine = {
   RelatedObjects?: Array<{ value?: unknown }>;
 };
 
-type IfcExportResult = {
+export type IfcTaskExportMode = "normalized" | "source-preserving";
+
+export type IfcExportResult = {
   bytes: Uint8Array;
   taskCount: number;
 };
@@ -155,6 +157,89 @@ const getElementExpressId = (
   return typeof expressID === "number" ? expressID : null;
 };
 
+const sourceDecoder = new TextDecoder("iso-8859-1");
+const sourceEncoder = new TextEncoder();
+
+const getSourceInsertionOffset = (source: Uint8Array) => {
+  const text = sourceDecoder.decode(source);
+  const pattern = /(?:^|\r?\n)ENDSEC;(?=(?:\r?\n)+END-ISO-10303-21;)/g;
+  let match: RegExpExecArray | null = null;
+  let insertionOffset = -1;
+  while ((match = pattern.exec(text))) {
+    insertionOffset = match.index + match[0].lastIndexOf("ENDSEC;");
+  }
+  if (insertionOffset < 0) {
+    throw new Error("The IFC DATA section has no final ENDSEC marker.");
+  }
+  return insertionOffset;
+};
+
+const getHighestExpressId = (source: Uint8Array, insertionOffset: number) => {
+  const text = sourceDecoder.decode(source.slice(0, insertionOffset));
+  const pattern = /(?:^|\r?\n)\s*#(\d+)\s*=/g;
+  let highest = 0;
+  let match: RegExpExecArray | null = null;
+  while ((match = pattern.exec(text))) {
+    highest = Math.max(highest, Number(match[1]));
+  }
+  if (!highest) throw new Error("No IFC express IDs were found in the DATA section.");
+  return highest;
+};
+
+const getSourceLineEnding = (source: Uint8Array) => {
+  return sourceDecoder.decode(source).includes("\r\n") ? "\r\n" : "\n";
+};
+
+const getGuidValue = (api: WEBIFC.IfcAPI, modelID: number) => {
+  const value = stringValue(api.CreateIFCGloballyUniqueId(modelID));
+  if (!value) throw new Error("web-ifc could not create an IFC GlobalId.");
+  return value;
+};
+
+const getOwnerHistoryReference = (element: IfcLine) => {
+  const expressID = valueOf(element.OwnerHistory);
+  return typeof expressID === "number" ? `#${expressID}` : "$";
+};
+
+const escapeIfcString = (api: WEBIFC.IfcAPI, value: string) => {
+  return api.EncodeText(value);
+};
+
+const createRawTaskLines = (
+  api: WEBIFC.IfcAPI,
+  modelID: number,
+  task: RobotTask,
+  elementId: number,
+  ownerHistory: string,
+  firstExpressId: number,
+) => {
+  const properties = getTaskProperties(task);
+  const propertyIds = properties.map((_, index) => firstExpressId + index);
+  const propertyLines = properties.map(([name, value], index) => {
+    return `#${propertyIds[index]}=IFCPROPERTYSINGLEVALUE('${escapeIfcString(api, name)}',$,IFCTEXT('${escapeIfcString(api, value)}'),$);`;
+  });
+  const propertySetId = firstExpressId + properties.length;
+  const relationId = propertySetId + 1;
+  const propertySetLine = `#${propertySetId}=IFCPROPERTYSET('${getGuidValue(api, modelID)}',${ownerHistory},'${escapeIfcString(api, TASK_PSET_NAME)}',$,(${propertyIds.map((id) => `#${id}`).join(",")}));`;
+  const relationLine = `#${relationId}=IFCRELDEFINESBYPROPERTIES('${getGuidValue(api, modelID)}',${ownerHistory},$,$,(#${elementId}),#${propertySetId});`;
+  return {
+    lines: [...propertyLines, propertySetLine, relationLine],
+    nextExpressId: relationId + 1,
+  };
+};
+
+const spliceBytes = (
+  source: Uint8Array,
+  offset: number,
+  insertion: Uint8Array,
+) => {
+  const result = new Uint8Array(source.length + insertion.length);
+  result.set(source.subarray(0, offset));
+  result.set(insertion, offset);
+  result.set(source.subarray(offset), offset + insertion.length);
+  return result;
+};
+
 export const exportTasksToIfc = async (
   loader: OBC.IfcLoader,
   source: Uint8Array,
@@ -207,6 +292,64 @@ export const exportTasksToIfc = async (
     }
 
     return { bytes: api.SaveModel(modelID), taskCount };
+  });
+};
+
+/**
+ * Appends new robot-task STEP entities without serializing or otherwise changing
+ * the source IFC. This is intended for human-readable source diffs.
+ */
+export const exportTasksToSourcePreservingIfc = async (
+  loader: OBC.IfcLoader,
+  source: Uint8Array,
+  tasks: RobotTask[],
+): Promise<IfcExportResult> => {
+  const insertionOffset = getSourceInsertionOffset(source);
+  const lineEnding = getSourceLineEnding(source);
+  const firstExpressId = getHighestExpressId(source, insertionOffset) + 1;
+
+  return runWithIfcModel(loader, source, (api, modelID) => {
+    if (getRobotPropertySetIds(api, modelID).length) {
+      throw new Error(
+        "Source-preserving export requires an IFC without existing Pset_RobotTask entries.",
+      );
+    }
+
+    let nextExpressId = firstExpressId;
+    const lines: string[] = [];
+    for (const task of tasks) {
+      const elementId = getElementExpressId(
+        api,
+        modelID,
+        task.relatedElementGlobalId,
+      );
+      if (elementId === null) {
+        throw new Error(
+          `Task ${task.id} cannot be linked to an element in the source IFC.`,
+        );
+      }
+      const element = api.GetLine(modelID, elementId) as IfcLine;
+      const rawTask = createRawTaskLines(
+        api,
+        modelID,
+        task,
+        elementId,
+        getOwnerHistoryReference(element),
+        nextExpressId,
+      );
+      lines.push(...rawTask.lines);
+      nextExpressId = rawTask.nextExpressId;
+    }
+
+    const prefix = source.subarray(0, insertionOffset);
+    const needsLeadingLineEnding = prefix[prefix.length - 1] !== 10;
+    const insertion = sourceEncoder.encode(
+      `${needsLeadingLineEnding ? lineEnding : ""}${lines.join(lineEnding)}${lineEnding}`,
+    );
+    return {
+      bytes: spliceBytes(source, insertionOffset, insertion),
+      taskCount: tasks.length,
+    };
   });
 };
 

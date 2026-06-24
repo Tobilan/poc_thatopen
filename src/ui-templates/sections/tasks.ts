@@ -1,6 +1,7 @@
 import * as BUI from "@thatopen/ui";
 import { appIcons } from "../../globals";
 import { TaskService } from "../../tasks/taskService";
+import { IfcTaskExportMode } from "../../tasks/ifcRoundtrip";
 import {
   RobotActionDraft,
   RobotActionExecutionStatus,
@@ -150,9 +151,9 @@ export const tasksPanelTemplate: BUI.StatefullComponent<TasksPanelState> = (
     }
   };
 
-  const onExportIfc = async () => {
+  const onExportIfc = async (mode: IfcTaskExportMode) => {
     try {
-      const exported = await service.exportActiveIfc();
+      const exported = await service.exportActiveIfc(mode);
       const blob = new Blob([exported.bytes], { type: "application/x-step" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -160,6 +161,7 @@ export const tasksPanelTemplate: BUI.StatefullComponent<TasksPanelState> = (
       link.download = exported.fileName;
       link.click();
       URL.revokeObjectURL(url);
+      BUI.ContextMenu.removeMenus();
       controller.message = `${exported.taskCount} task(s) exported to ${exported.fileName}.`;
       update();
     } catch (error) {
@@ -229,7 +231,12 @@ export const tasksPanelTemplate: BUI.StatefullComponent<TasksPanelState> = (
         <div class="task-panel__header">
           <span class="task-panel__model">${service.activeModelLabel ?? "No model loaded"}</span>
           <div class="task-panel__header-actions">
-            <bim-button style="flex: 0" label="Export IFC" icon=${appIcons.EXPORT} ?disabled=${!service.canExportActiveIfc} @click=${onExportIfc}></bim-button>
+            <bim-button style="flex: 0" label="Export IFC" icon=${appIcons.EXPORT} ?disabled=${!service.canExportActiveIfc}>
+              <bim-context-menu style="gap: 0.25rem; width: 16rem;">
+                <bim-button label="Normalized IFC" @click=${() => onExportIfc("normalized")}></bim-button>
+                <bim-button label="Source-preserving IFC (Diff)" @click=${() => onExportIfc("source-preserving")}></bim-button>
+              </bim-context-menu>
+            </bim-button>
             <bim-button style="flex: 0" label="Add task" icon=${appIcons.ADD} ?disabled=${!service.canCreateTask} @click=${onStartCreate}></bim-button>
           </div>
         </div>

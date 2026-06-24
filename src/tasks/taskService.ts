@@ -1,6 +1,11 @@
 import * as OBC from "@thatopen/components";
 import * as OBF from "@thatopen/components-front";
-import { exportTasksToIfc, importTasksFromIfc } from "./ifcRoundtrip";
+import {
+  exportTasksToIfc,
+  exportTasksToSourcePreservingIfc,
+  IfcTaskExportMode,
+  importTasksFromIfc,
+} from "./ifcRoundtrip";
 import { TaskMarkers } from "./taskMarkers";
 import { TaskStore } from "./taskStore";
 import { RobotTask, RobotTaskDraft, RobotTaskUpdate } from "./taskTypes";
@@ -113,7 +118,9 @@ export class TaskService {
     this.notify();
   }
 
-  async exportActiveIfc(): Promise<IfcTaskExport> {
+  async exportActiveIfc(
+    mode: IfcTaskExportMode = "normalized",
+  ): Promise<IfcTaskExport> {
     if (!this.activeModelId) throw new TaskServiceError("No model is active.");
     const context = this.contexts.get(this.activeModelId);
     if (!context?.ifcSource) {
@@ -122,7 +129,11 @@ export class TaskService {
     const tasks = this.tasksByModelId.get(context.modelId) ?? [];
     if (!tasks.length) throw new TaskServiceError("There are no robot tasks to export.");
 
-    const result = await exportTasksToIfc(
+    const exporter =
+      mode === "source-preserving"
+        ? exportTasksToSourcePreservingIfc
+        : exportTasksToIfc;
+    const result = await exporter(
       this.components.get(OBC.IfcLoader),
       context.ifcSource,
       tasks,
@@ -137,7 +148,10 @@ export class TaskService {
     const baseName = context.label.replace(/\.ifc$/i, "");
     return {
       bytes: result.bytes,
-      fileName: `${baseName}-robot-tasks.ifc`,
+      fileName:
+        mode === "source-preserving"
+          ? `${baseName}-robot-tasks-diff.ifc`
+          : `${baseName}-robot-tasks.ifc`,
       taskCount: result.taskCount,
     };
   }
