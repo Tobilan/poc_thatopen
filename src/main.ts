@@ -5,8 +5,6 @@ import * as BUI from "@thatopen/ui";
 import * as TEMPLATES from "./ui-templates";
 import { appIcons, CONTENT_GRID_ID } from "./globals";
 import { viewportSettingsTemplate } from "./ui-templates/buttons/viewport-settings";
-import { TaskService } from "./tasks/taskService";
-import { TaskStore } from "./tasks/taskStore";
 
 BUI.Manager.init();
 
@@ -122,12 +120,6 @@ highlighter.setup({
   },
 });
 
-const robotTasks = new TaskService(
-  components,
-  world,
-  new TaskStore(window.localStorage),
-);
-
 // Clipper Setup
 const clipper = components.get(OBC.Clipper);
 viewport.ondblclick = () => {
@@ -193,10 +185,6 @@ fragments.list.onItemSet.add(async ({ value: model }) => {
   await fragments.core.update(true);
 });
 
-fragments.list.onItemDeleted.add((modelId) => {
-  robotTasks.unregisterModel(modelId);
-});
-
 // Viewport Layouts
 const [viewportSettings] = BUI.Component.create(viewportSettingsTemplate, {
   components,
@@ -226,7 +214,6 @@ const [contentGrid] = BUI.Component.create<
   components,
   id: CONTENT_GRID_ID,
   viewportTemplate: viewportCardTemplate,
-  tasks: robotTasks,
 });
 
 const setInitialLayout = () => {

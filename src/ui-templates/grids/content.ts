@@ -1,7 +1,6 @@
 import * as OBC from "@thatopen/components";
 import * as BUI from "@thatopen/ui";
 import * as TEMPLATES from "..";
-import { TaskService } from "../../tasks/taskService";
 import {
   CONTENT_GRID_GAP,
   CONTENT_GRID_ID,
@@ -22,9 +21,7 @@ type ElementData = {
 
 type Viewpoints = { name: "viewpoints"; state: TEMPLATES.ViewpointsPanelState };
 
-type Tasks = { name: "tasks"; state: TEMPLATES.TasksPanelState };
-
-export type ContentGridElements = [Viewer, Models, ElementData, Viewpoints, Tasks];
+export type ContentGridElements = [Viewer, Models, ElementData, Viewpoints];
 
 export type ContentGridLayouts = ["Viewer"];
 
@@ -32,22 +29,22 @@ export interface ContentGridState {
   components: OBC.Components;
   id: string;
   viewportTemplate: BUI.StatelessComponent;
-  tasks: TaskService;
 }
 
 export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
   state,
 ) => {
-  const { components, tasks } = state;
+  const { components } = state;
 
   const onCreated = (e?: Element) => {
     if (!e) return;
     const grid = e as BUI.Grid<ContentGridLayouts, ContentGridElements>;
 
     grid.elements = {
+      // TODO: Add an AGENTS-compliant mission/task panel after the new domain model is integrated.
       models: {
         template: TEMPLATES.modelsPanelTemplate,
-        initialState: { components, tasks },
+        initialState: { components },
       },
       elementData: {
         template: TEMPLATES.elementsDataPanelTemplate,
@@ -57,10 +54,6 @@ export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
         template: TEMPLATES.viewpointsPanelTemplate,
         initialState: { components },
       },
-      tasks: {
-        template: TEMPLATES.tasksPanelTemplate,
-        initialState: { service: tasks },
-      },
       viewer: state.viewportTemplate,
     };
 
@@ -69,7 +62,6 @@ export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
         template: `
           "models viewer elementData" 1fr
           "viewpoints viewer elementData" 1fr
-          "tasks viewer elementData" 1fr
           /${SMALL_COLUMN_WIDTH} 1fr ${SMALL_COLUMN_WIDTH}
         `,
       },

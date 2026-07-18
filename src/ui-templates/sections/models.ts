@@ -2,18 +2,15 @@ import * as BUI from "@thatopen/ui";
 import * as CUI from "@thatopen/ui-obc";
 import * as OBC from "@thatopen/components";
 import { appIcons } from "../../globals";
-import { getModelHash } from "../../tasks/taskStore";
-import { TaskService } from "../../tasks/taskService";
 
 export interface ModelsPanelState {
   components: OBC.Components;
-  tasks: TaskService;
 }
 
 export const modelsPanelTemplate: BUI.StatefullComponent<ModelsPanelState> = (
   state,
 ) => {
-  const { components, tasks } = state;
+  const { components } = state;
 
   const ifcLoader = components.get(OBC.IfcLoader);
   const fragments = components.get(OBC.FragmentsManager);
@@ -23,7 +20,11 @@ export const modelsPanelTemplate: BUI.StatefullComponent<ModelsPanelState> = (
     actions: { download: false },
   });
 
-  const getModelId = (fileName: string, hash: string) => {
+  const getModelId = async (fileName: string, bytes: Uint8Array) => {
+    const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer);
+    const hash = Array.from(new Uint8Array(digest), (value) =>
+      value.toString(16).padStart(2, "0"),
+    ).join("");
     const baseName = fileName.replace(/\.(ifc|frag)$/i, "");
     return `${baseName}-${hash.slice(0, 8)}`;
   };
@@ -41,14 +42,8 @@ export const modelsPanelTemplate: BUI.StatefullComponent<ModelsPanelState> = (
       try {
         const buffer = await file.arrayBuffer();
         const bytes = new Uint8Array(buffer);
-        const hash = await getModelHash(bytes);
-        const model = await ifcLoader.load(bytes, true, getModelId(file.name, hash));
-        await tasks.registerModel({
-          modelId: model.modelId,
-          modelHash: hash,
-          label: file.name,
-          ifcSource: bytes,
-        });
+        const modelId = await getModelId(file.name, bytes);
+        await ifcLoader.load(bytes, true, modelId);
         BUI.ContextMenu.removeMenus();
       } finally {
         target.loading = false;
@@ -73,14 +68,9 @@ export const modelsPanelTemplate: BUI.StatefullComponent<ModelsPanelState> = (
       try {
         const buffer = await file.arrayBuffer();
         const bytes = new Uint8Array(buffer);
-        const hash = await getModelHash(bytes);
-        const model = await fragments.core.load(bytes, {
-          modelId: getModelId(file.name, hash),
-        });
-        await tasks.registerModel({
-          modelId: model.modelId,
-          modelHash: hash,
-          label: file.name,
+        const modelId = await getModelId(file.name, bytes);
+        await fragments.core.load(bytes, {
+          modelId,
         });
         BUI.ContextMenu.removeMenus();
       } finally {
