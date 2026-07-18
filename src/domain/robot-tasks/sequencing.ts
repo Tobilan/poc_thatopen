@@ -27,7 +27,7 @@ export interface CreateTaskSequenceInput {
  *
  * IDs are trimmed to avoid visually identical sequence or task references that
  * differ only by whitespace. Structural correctness is intentionally checked by
- * validateTaskSequence or addSequence because this factory does not receive the
+ * validateTaskSequence or addTaskSequence because this factory does not receive the
  * mission task collection needed to resolve the referenced IDs.
  *
  * @param input Sequence identity, predecessor, successor, and optional type.
@@ -171,7 +171,7 @@ export const validateTaskSequence = (
  * @returns A mission copy containing the validated dependency.
  * @throws RobotTaskDomainError For a duplicate ID or invalid resulting graph.
  */
-export const addSequence = (
+export const addTaskSequence = (
   mission: RobotMission,
   sequence: RobotTaskSequence,
   now = new Date().toISOString(),

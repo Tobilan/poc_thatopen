@@ -76,6 +76,35 @@ const validateReference = (
       );
     }
   }
+
+  // Deserialized data can bypass TypeScript and place action semantics on a
+  // reference. Static object metadata is allowed; only RobotAction-shaped
+  // properties are rejected because those values must belong to the task.
+  const unknownReference = reference as unknown as Record<string, unknown>;
+
+  // Potential nested property record inspected for task-only RobotAction fields.
+  const embeddedProperties = unknownReference.properties;
+  if (
+    embeddedProperties &&
+    typeof embeddedProperties === "object" &&
+    [
+      "targetState",
+      "targetObjectRole",
+      "affectedObjectRole",
+      "requiredCapability",
+      "preconditions",
+      "postconditions",
+      "successCondition",
+    ].some((propertyName) => propertyName in embeddedProperties)
+  ) {
+    issues.push(
+      issue(
+        "OBJECT_ACTION_PROPERTIES_FORBIDDEN",
+        "RobotAction properties must be attached to the task, not an object reference.",
+        taskId,
+      ),
+    );
+  }
   return issues;
 };
 
@@ -122,6 +151,98 @@ const validateTargetClass = (
   }
   return issues;
 };
+
+/**
+ * Validates movement-specific requirements for a task.
+ *
+ * Non-MOVE tasks have no movement requirements and therefore produce no issues.
+ * A MOVE task is executable only when both its origin and destination references
+ * are present.
+ *
+ * @param task Task whose movement references should be checked.
+ * @returns Missing-reference errors for MOVE tasks, otherwise an empty array.
+ */
+export function validateMovementTask(
+  task: RobotTask,
+): RobotTaskValidationIssue[] {
+  if (task.actionType !== "MOVE") return [];
+
+  // Accumulates the missing origin and destination findings for this MOVE task.
+  const issues: RobotTaskValidationIssue[] = [];
+  if (!task.startReference) {
+    issues.push(
+      issue("MOVE_START_REQUIRED", "MOVE requires a start reference.", task.id),
+    );
+  }
+  if (!task.targetReference) {
+    issues.push(
+      issue(
+        "MOVE_TARGET_REQUIRED",
+        "MOVE requires a target reference.",
+        task.id,
+      ),
+    );
+  }
+  return issues;
+}
+
+/**
+ * Validates actions that directly interact with or pass through IFC objects.
+ *
+ * OPEN, CLOSE, SWITCH_ON, and SWITCH_OFF require at least one direct target.
+ * PASS_THROUGH requires at least one object reference, either direct or affected,
+ * so openings and equivalent navigation references can be represented. Known IFC
+ * types are additionally checked for door-like and switch-like compatibility.
+ *
+ * @param task Task whose object interaction requirements should be checked.
+ * @returns Object-reference errors and IFC type warnings or errors.
+ */
+export function validateObjectInteractionTask(
+  task: RobotTask,
+): RobotTaskValidationIssue[] {
+  // Accumulates all object-reference and IFC-class findings for this task.
+  const issues: RobotTaskValidationIssue[] = [];
+
+  // Actions that manipulate an object directly must name at least one target.
+  const requiresTarget = ["OPEN", "CLOSE", "SWITCH_ON", "SWITCH_OFF"];
+  if (requiresTarget.includes(task.actionType) && !task.targetObjects.length) {
+    issues.push(
+      issue(
+        "TASK_TARGET_REQUIRED",
+        `${task.actionType} requires at least one target object.`,
+        task.id,
+      ),
+    );
+  }
+  if (
+    task.actionType === "PASS_THROUGH" &&
+    !task.targetObjects.length &&
+    !task.affectedObjects.length
+  ) {
+    issues.push(
+      issue(
+        "PASS_THROUGH_REFERENCE_REQUIRED",
+        "PASS_THROUGH requires at least one referenced object.",
+        task.id,
+      ),
+    );
+  }
+  if (task.actionType === "OPEN" || task.actionType === "CLOSE") {
+    issues.push(
+      ...validateTargetClass(task, "door-like", (ifcClass) =>
+        ifcClass.includes("DOOR"),
+      ),
+    );
+  }
+  if (task.actionType === "SWITCH_ON" || task.actionType === "SWITCH_OFF") {
+    issues.push(
+      ...validateTargetClass(task, "switch-like", (ifcClass) =>
+        ifcClass.includes("SWITCH"),
+      ),
+    );
+  }
+  return issues;
+}
 
 /**
  * Validates one executable task independently of its containing mission.
@@ -188,53 +309,9 @@ export const validateTask = (task: RobotTask): RobotTaskValidationIssue[] => {
   }
 
   // Invalid action values cannot be evaluated against action-specific rules.
-  if (!actionTypeIsValid) {
-    return issues;
-  }
-  if (task.actionType === "MOVE") {
-    if (!task.startReference) {
-      issues.push(
-        issue(
-          "MOVE_START_REQUIRED",
-          "MOVE requires a start reference.",
-          task.id,
-        ),
-      );
-    }
-    if (!task.targetReference) {
-      issues.push(
-        issue(
-          "MOVE_TARGET_REQUIRED",
-          "MOVE requires a target reference.",
-          task.id,
-        ),
-      );
-    }
-  } else if (!task.targetObjects.length) {
-    issues.push(
-      issue(
-        "TASK_TARGET_REQUIRED",
-        `${task.actionType} requires at least one target object.`,
-        task.id,
-      ),
-    );
-  }
-
-  if (task.actionType === "OPEN" || task.actionType === "CLOSE") {
-    issues.push(
-      // A normalized IFC class is door-like when its entity name contains DOOR.
-      ...validateTargetClass(task, "door-like", (ifcClass) =>
-        ifcClass.includes("DOOR"),
-      ),
-    );
-  }
-  if (task.actionType === "SWITCH_ON" || task.actionType === "SWITCH_OFF") {
-    issues.push(
-      // A normalized IFC class is switch-like when its entity name contains SWITCH.
-      ...validateTargetClass(task, "switch-like", (ifcClass) =>
-        ifcClass.includes("SWITCH"),
-      ),
-    );
+  if (actionTypeIsValid) {
+    issues.push(...validateMovementTask(task));
+    issues.push(...validateObjectInteractionTask(task));
   }
   return issues;
 };

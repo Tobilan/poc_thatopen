@@ -12,7 +12,7 @@ import type {
 } from "./types";
 
 /**
- * Input accepted by createMission. Child tasks and sequence relations are not
+ * Input accepted by createRobotMission. Child tasks and sequence relations are not
  * accepted here because every new mission starts as an empty parent container
  * and receives its executable steps through the dedicated builder functions.
  */
@@ -187,7 +187,7 @@ const touchTask = (task: RobotTask, updatedAt: string): RobotTask => ({
  * @returns A valid empty RobotMission ready to receive child tasks.
  * @throws RobotTaskDomainError When the mission ID or name is empty.
  */
-export const createMission = (
+export const createRobotMission = (
   input: CreateMissionInput,
   now = new Date().toISOString(),
 ): RobotMission => {
@@ -259,7 +259,7 @@ export const createRobotTask = (
  * @returns A new mission containing the existing tasks followed by the new task.
  * @throws RobotTaskDomainError When another task already uses the same ID.
  */
-export const addSubtask = (
+export const addTaskToMission = (
   mission: RobotMission,
   task: RobotTask,
   now = new Date().toISOString(),
@@ -359,3 +359,19 @@ export const assignRobotActionProperties = (
   properties: RobotActionProperties,
   now = new Date().toISOString(),
 ): RobotTask => touchTask({ ...task, properties }, now);
+
+/**
+ * Replaces the task timing information without changing action semantics or
+ * object references. Timing belongs directly to the task because it is intended
+ * for a later IfcTaskTime mapping, not for a custom action property set.
+ *
+ * @param task Task whose schedule or execution timing should be assigned.
+ * @param time Complete replacement timing value for the task.
+ * @param now ISO 8601 timestamp recorded as the task modification time.
+ * @returns A task copy with the supplied RobotTaskTime value.
+ */
+export const assignTaskTime = (
+  task: RobotTask,
+  time: RobotTaskTime,
+  now = new Date().toISOString(),
+): RobotTask => touchTask({ ...task, time }, now);

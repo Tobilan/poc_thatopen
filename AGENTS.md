@@ -696,6 +696,7 @@ Wenn ein Agent an diesem Projekt arbeitet, soll er:
 - bei Fehlern zuerst Browser-Konsole, Network-Tab und Worker-/WASM-Pfade prüfen
 - vorhandene Tests ausführen oder neue Tests ergänzen, wenn Verhalten geändert wird
 - vor größeren Refactorings kurz erklären, warum sie notwendig sind
+- führe eine ESLint überprüfung durch
 
 ## Nicht-Ziele des ersten PoC
 
