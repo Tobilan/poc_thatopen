@@ -6,6 +6,7 @@
  * bundle TypeScript once and execute every registered `node:test` case.
  */
 import "./robot-mission-domain.test";
+import "./ifc-relation-mapper.test";
 import "./robot-mission-persistence.test";
 import "./robot-mission-service.test";
 import "./selection-candidate-source.test";
