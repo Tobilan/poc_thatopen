@@ -272,3 +272,153 @@ bim-grid[floating] .dashboard-card {
 .selection-candidate-warning {
   color: #f1bf5a;
 }
+
+.robot-mission-panel,
+.robot-mission-create,
+.robot-task-create,
+.robot-task-form,
+.robot-task-reference-list,
+.robot-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.robot-mission-create,
+.robot-task-create,
+.robot-task-fields.two-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.robot-mission-create button,
+.robot-task-create button {
+  align-self: end;
+}
+
+.robot-mission-panel label,
+.robot-task-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+}
+
+.robot-mission-panel input,
+.robot-mission-panel select,
+.robot-mission-panel textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--bim-ui_bg-contrast-40);
+  border-radius: 0.2rem;
+  color: var(--bim-ui_bg-contrast-100);
+  background: var(--bim-ui_bg-contrast-20);
+  font: inherit;
+}
+
+.robot-mission-panel textarea {
+  min-height: 3.5rem;
+  resize: vertical;
+}
+
+.robot-mission-picker,
+.robot-task-selection,
+.robot-task-draft-note,
+.robot-task-empty,
+.robot-task-notice {
+  font-size: 0.75rem;
+}
+
+.robot-task-notice {
+  padding: 0.45rem;
+  border-left: 3px solid var(--bim-ui_accent-base);
+  background: var(--bim-ui_bg-contrast-20);
+}
+
+.robot-task-card {
+  border: 1px solid var(--bim-ui_bg-contrast-40);
+  border-radius: 0.25rem;
+  background: var(--bim-ui_bg-contrast-10);
+}
+
+.robot-task-card summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.55rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.robot-task-card form {
+  padding: 0 0.55rem 0.55rem;
+}
+
+.robot-task-action {
+  color: var(--bim-ui_accent-base);
+  font-size: 0.68rem;
+}
+
+.robot-task-assignment-actions,
+.robot-task-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.robot-task-reference-list {
+  font-size: 0.68rem;
+  overflow-wrap: anywhere;
+}
+
+.robot-task-form fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 0.55rem;
+  border: 1px solid var(--bim-ui_bg-contrast-40);
+}
+
+.robot-task-form legend {
+  padding: 0 0.25rem;
+  color: var(--bim-ui_bg-contrast-80);
+  font-size: 0.7rem;
+}
+
+.robot-task-validation {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding-left: 1rem;
+  font-size: 0.7rem;
+}
+
+.robot-task-validation.valid {
+  padding-left: 0;
+  color: #9ed66f;
+}
+
+.robot-task-validation .error {
+  color: #ef9090;
+}
+
+.robot-task-validation .warning {
+  color: #f1bf5a;
+}
+
+.robot-task-form-actions .danger {
+  color: #ffc2c2;
+}
+
+@media (max-width: 850px) {
+  .robot-mission-create,
+  .robot-task-create,
+  .robot-task-fields.two-columns {
+    grid-template-columns: 1fr;
+  }
+}

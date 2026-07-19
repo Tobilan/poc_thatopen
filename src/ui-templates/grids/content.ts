@@ -10,6 +10,7 @@ import type {
   DirectIfcModelProvenance,
   ViewerObjectSelectionManager,
 } from "../../viewer/robot-tasks";
+import type { RobotMissionService } from "../../application/robot-tasks";
 
 type Viewer = "viewer";
 
@@ -25,7 +26,18 @@ type ElementData = {
 
 type Viewpoints = { name: "viewpoints"; state: TEMPLATES.ViewpointsPanelState };
 
-export type ContentGridElements = [Viewer, Models, ElementData, Viewpoints];
+type RobotMissionTasks = {
+  name: "robotMissionTasks";
+  state: TEMPLATES.RobotMissionTasksPanelState;
+};
+
+export type ContentGridElements = [
+  Viewer,
+  Models,
+  ElementData,
+  Viewpoints,
+  RobotMissionTasks,
+];
 
 export type ContentGridLayouts = ["Viewer"];
 
@@ -35,19 +47,20 @@ export interface ContentGridState {
   viewportTemplate: BUI.StatelessComponent;
   selectionManager: ViewerObjectSelectionManager;
   modelProvenance: DirectIfcModelProvenance;
+  missionService: RobotMissionService;
 }
 
 export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
   state,
 ) => {
-  const { components, selectionManager, modelProvenance } = state;
+  const { components, selectionManager, modelProvenance, missionService } =
+    state;
 
   const onCreated = (e?: Element) => {
     if (!e) return;
     const grid = e as BUI.Grid<ContentGridLayouts, ContentGridElements>;
 
     grid.elements = {
-      // TODO: Add an AGENTS-compliant mission/task panel after the new domain model is integrated.
       models: {
         template: TEMPLATES.modelsPanelTemplate,
         initialState: { components, modelProvenance },
@@ -55,6 +68,10 @@ export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
       elementData: {
         template: TEMPLATES.elementsDataPanelTemplate,
         initialState: { components, selectionManager },
+      },
+      robotMissionTasks: {
+        template: TEMPLATES.robotMissionTasksPanelTemplate,
+        initialState: { missionService, selectionManager },
       },
       viewpoints: {
         template: TEMPLATES.viewpointsPanelTemplate,
@@ -67,6 +84,7 @@ export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
       Viewer: {
         template: `
           "models viewer elementData" 1fr
+          "robotMissionTasks viewer elementData" 2fr
           "viewpoints viewer elementData" 1fr
           /${SMALL_COLUMN_WIDTH} 1fr ${SMALL_COLUMN_WIDTH}
         `,

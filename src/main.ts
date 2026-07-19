@@ -12,6 +12,8 @@ import {
   ThatOpenSelectionMetadataResolver,
   ViewerObjectSelectionManager,
 } from "./viewer/robot-tasks";
+import { RobotMissionService } from "./application/robot-tasks";
+import { LocalStorageRobotMissionRepository } from "./persistence/robot-tasks";
 
 BUI.Manager.init();
 
@@ -141,6 +143,12 @@ const selectionHighlightPort = new ThatOpenSelectionHighlightPort(highlighter);
 const selectionManager = new ViewerObjectSelectionManager(
   selectionSource,
   selectionHighlightPort,
+);
+
+// The composition root chooses browser storage; the service remains independent
+// from localStorage, viewer selections, and any future IFC serialization.
+const robotMissionService = new RobotMissionService(
+  new LocalStorageRobotMissionRepository(window.localStorage),
 );
 
 const selectionCanvas = world.renderer.three.domElement;
@@ -307,6 +315,7 @@ const [contentGrid] = BUI.Component.create<
   viewportTemplate: viewportCardTemplate,
   selectionManager,
   modelProvenance,
+  missionService: robotMissionService,
 });
 
 const setInitialLayout = () => {
