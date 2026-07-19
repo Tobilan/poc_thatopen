@@ -71,6 +71,13 @@ test("candidate source orders, deduplicates, filters, and canonicalizes all hits
     raycast: async () => raycastHit(parentModel, 1, 1),
     getVisible: async (localIds: number[]) =>
       localIds.map((localId) => localId !== 1),
+    getItemsIdsWithGeometry: async () => [1, 2, 3, 9],
+    getItemsWithGeometryCategories: async () => [
+      "IFCDOOR",
+      "IFCDOOR",
+      "IFCDOOR",
+      "IFCDOOR",
+    ],
     getGuidsByLocalIds: async (localIds: number[]) => {
       guidRequests += 1;
       return localIds.map(() => null);
@@ -103,6 +110,8 @@ test("candidate source orders, deduplicates, filters, and canonicalizes all hits
     ],
     raycast: async () => raycastHit(fragmentModel, 7, 3),
     getVisible: async (localIds: number[]) => localIds.map(() => true),
+    getItemsIdsWithGeometry: async () => [7, 8],
+    getItemsWithGeometryCategories: async () => ["IFCDOOR", "IFCDOOR"],
     getGuidsByLocalIds: async (localIds: number[]) =>
       localIds.map((localId) => (localId === 7 ? "fragment-guid" : null)),
     getItem: (localId: number) => ({
@@ -238,6 +247,8 @@ test("hover uses nearest-only raycasts and preserves other model results", async
       return [];
     },
     getVisible: async () => [true],
+    getItemsIdsWithGeometry: async () => [1],
+    getItemsWithGeometryCategories: async () => ["IFCDOOR"],
     getGuidsByLocalIds: async () => ["hover-guid"],
     getItem: () => ({
       getCategory: async () => "IFCDOOR",
@@ -305,6 +316,12 @@ test("metadata resolver batches reads and evicts least-recently-used entries", a
       guidBatches.push([...localIds]);
       return localIds.map((localId) => `guid-${localId}`);
     },
+    getItemsIdsWithGeometry: async () => [1, 2, 3],
+    getItemsWithGeometryCategories: async () => [
+      "IFCDOOR",
+      "IFCDOOR",
+      "IFCDOOR",
+    ],
     getItem: (localId: number) => ({
       getCategory: async () => "IFCDOOR",
       getAttributes: async () => ({

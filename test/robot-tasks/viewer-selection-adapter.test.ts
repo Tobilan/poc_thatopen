@@ -186,8 +186,11 @@ test("conversion rejects selections without a stable IFC identifier", () => {
  */
 test("That Open adapter resolves ordered references without owning selection state", async () => {
   const model = {
+    modelId: "model-a",
     getGuidsByLocalIds: async (localIds: number[]) =>
       localIds.map((localId) => (localId === 5 ? "door-guid" : null)),
+    getItemsIdsWithGeometry: async () => [5, 8],
+    getItemsWithGeometryCategories: async () => ["IFCDOOR", "IFCSPACE"],
     getItem: (localId: number) => ({
       getCategory: async () => (localId === 5 ? "IFCDOOR" : "IFCSPACE"),
       getAttributes: async () => ({
@@ -231,6 +234,7 @@ test("That Open adapter resolves ordered references without owning selection sta
  */
 test("That Open adapter uses only confirmed fallback express IDs", async () => {
   const failedModel = {
+    modelId: "failed-model",
     getGuidsByLocalIds: async () => {
       throw new Error("Worker unavailable");
     },

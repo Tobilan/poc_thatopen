@@ -68,17 +68,13 @@ const resolveExpressId = async (
 const resolveItemMetadata = async (
   model: FragmentsModel,
   localId: number,
-): Promise<Pick<ViewerSelectionItemData, "ifcClass" | "name">> => {
+): Promise<Pick<ViewerSelectionItemData, "name">> => {
   try {
     const item = model.getItem(localId);
-    const [categoryResult, attributesResult] = await Promise.allSettled([
-      item.getCategory(),
-      item.getAttributes(),
-    ]);
+    const [attributesResult] = await Promise.allSettled([item.getAttributes()]);
     const attributes = fulfilledValue(attributesResult);
 
     return {
-      ifcClass: fulfilledValue(categoryResult),
       name: attributes?.getValue("Name"),
     };
   } catch {
@@ -100,6 +96,10 @@ export class ThatOpenSelectionMetadataResolver
   private readonly pending = new Map<
     string,
     Promise<Readonly<ViewerSelectionItemData>>
+  >();
+  private readonly ifcClassMaps = new Map<
+    string,
+    Promise<ReadonlyMap<number, string | null>>
   >();
 
   constructor(
@@ -143,6 +143,7 @@ export class ThatOpenSelectionMetadataResolver
   clearCache(modelId?: string): void {
     if (modelId === undefined) {
       this.cache.clear();
+      this.ifcClassMaps.clear();
       return;
     }
 
@@ -150,6 +151,7 @@ export class ThatOpenSelectionMetadataResolver
     for (const key of this.cache.keys()) {
       if (key.startsWith(prefix)) this.cache.delete(key);
     }
+    this.ifcClassMaps.delete(modelId);
   }
 
   private cacheKey(modelId: string, localId: number): string {
@@ -220,6 +222,36 @@ export class ThatOpenSelectionMetadataResolver
     });
   }
 
+  /**
+   * Reads IFC classes through the supported batch API. Calling Item.getCategory
+   * would dispatch the unavailable `getItemCategory` worker action in
+   * Fragments 3.2 and repeatedly log worker TypeErrors in the browser.
+   */
+  private getIfcClassMap(
+    model: FragmentsModel,
+  ): Promise<ReadonlyMap<number, string | null>> {
+    const cached = this.ifcClassMaps.get(model.modelId);
+    if (cached) return cached;
+
+    const mapPromise = Promise.resolve()
+      .then(() =>
+        Promise.all([
+          model.getItemsIdsWithGeometry(),
+          model.getItemsWithGeometryCategories(),
+        ]),
+      )
+      .then(([localIds, ifcClasses]) => {
+        const classes = new Map<number, string | null>();
+        localIds.forEach((localId, index) => {
+          classes.set(localId, ifcClasses[index] ?? null);
+        });
+        return classes;
+      })
+      .catch(() => new Map<number, string | null>());
+    this.ifcClassMaps.set(model.modelId, mapPromise);
+    return mapPromise;
+  }
+
   private async resolveBatch(
     modelId: string,
     localIds: readonly number[],
@@ -238,11 +270,12 @@ export class ThatOpenSelectionMetadataResolver
       );
     }
 
-    const [expressIds, globalIds, metadata] = await Promise.all([
+    const [expressIds, globalIds, ifcClasses, metadata] = await Promise.all([
       expressIdsPromise,
       model
         .getGuidsByLocalIds([...localIds])
         .catch(() => localIds.map(() => null)),
+      this.getIfcClassMap(model),
       Promise.all(
         localIds.map((localId) => resolveItemMetadata(model, localId)),
       ),
@@ -254,6 +287,7 @@ export class ThatOpenSelectionMetadataResolver
         localId,
         expressId: expressIds[index],
         globalId: globalIds[index],
+        ifcClass: ifcClasses.get(localId),
         ...metadata[index],
       }),
     );
