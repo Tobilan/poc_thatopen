@@ -8,4 +8,6 @@
 import "./robot-mission-domain.test";
 import "./robot-mission-persistence.test";
 import "./robot-mission-service.test";
+import "./selection-candidate-source.test";
 import "./viewer-selection-adapter.test";
+import "./viewer-object-selection-manager.test";

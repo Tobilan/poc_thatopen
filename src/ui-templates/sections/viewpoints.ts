@@ -3,6 +3,7 @@ import * as CUI from "@thatopen/ui-obc";
 import * as OBC from "@thatopen/components";
 import * as OBF from "@thatopen/components-front";
 import { appIcons } from "../../globals";
+import { ROBOT_SELECTION_TRANSIENT_STYLES } from "../../viewer/robot-tasks";
 
 export interface ViewpointsPanelState {
   components: OBC.Components;
@@ -35,6 +36,7 @@ export const viewpointsPanelTemplate: BUI.StatefullComponent<
 
     // Update the viewpoint colors based on the highlighter
     for (const [style, definition] of highlighter.styles) {
+      if (ROBOT_SELECTION_TRANSIENT_STYLES.has(style)) continue;
       if (!definition) continue;
       const map = highlighter.selection[style];
       if (OBC.ModelIdMapUtils.isEmpty(map)) continue;

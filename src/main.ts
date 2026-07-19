@@ -5,6 +5,13 @@ import * as BUI from "@thatopen/ui";
 import * as TEMPLATES from "./ui-templates";
 import { appIcons, CONTENT_GRID_ID } from "./globals";
 import { viewportSettingsTemplate } from "./ui-templates/buttons/viewport-settings";
+import {
+  DirectIfcModelProvenance,
+  ThatOpenSelectionCandidateSource,
+  ThatOpenSelectionHighlightPort,
+  ThatOpenSelectionMetadataResolver,
+  ViewerObjectSelectionManager,
+} from "./viewer/robot-tasks";
 
 BUI.Manager.init();
 
@@ -99,10 +106,6 @@ world.camera.projection.onChanged.add(() => {
   }
 });
 
-world.camera.controls.addEventListener("rest", () => {
-  fragments.core.update(true);
-});
-
 const ifcLoader = components.get(OBC.IfcLoader);
 await ifcLoader.setup({
   autoSetWasm: false,
@@ -112,6 +115,7 @@ await ifcLoader.setup({
 const highlighter = components.get(OBF.Highlighter);
 highlighter.setup({
   world,
+  autoHighlightOnClick: false,
   selectMaterialDefinition: {
     color: new THREE.Color("#bcf124"),
     renderedFaces: 1,
@@ -120,8 +124,87 @@ highlighter.setup({
   },
 });
 
+const modelProvenance = new DirectIfcModelProvenance();
+const selectionMetadata = new ThatOpenSelectionMetadataResolver(
+  fragments,
+  modelProvenance,
+);
+const selectionSource = new ThatOpenSelectionCandidateSource(
+  fragments,
+  {
+    dom: world.renderer.three.domElement,
+    getCamera: () => world.camera.three,
+  },
+  selectionMetadata,
+);
+const selectionHighlightPort = new ThatOpenSelectionHighlightPort(highlighter);
+const selectionManager = new ViewerObjectSelectionManager(
+  selectionSource,
+  selectionHighlightPort,
+);
+
+const selectionCanvas = world.renderer.three.domElement;
+let primaryPointerDown:
+  | { pointerId: number; clientX: number; clientY: number }
+  | undefined;
+
+selectionCanvas.addEventListener("pointerdown", (event) => {
+  if (!event.isPrimary || event.button !== 0) return;
+  primaryPointerDown = {
+    pointerId: event.pointerId,
+    clientX: event.clientX,
+    clientY: event.clientY,
+  };
+});
+
+selectionCanvas.addEventListener("pointerup", (event) => {
+  if (!event.isPrimary || event.button !== 0) return;
+  const pointerDown = primaryPointerDown;
+  primaryPointerDown = undefined;
+  if (!pointerDown || pointerDown.pointerId !== event.pointerId) return;
+  const distance = Math.hypot(
+    event.clientX - pointerDown.clientX,
+    event.clientY - pointerDown.clientY,
+  );
+  if (distance > 4) return;
+  selectionManager.pickAt({ x: event.clientX, y: event.clientY });
+});
+
+selectionCanvas.addEventListener("pointermove", (event) => {
+  if (!event.isPrimary || event.pointerType === "touch" || primaryPointerDown) {
+    return;
+  }
+  selectionManager.hoverAt({ x: event.clientX, y: event.clientY });
+});
+
+selectionCanvas.addEventListener("pointerleave", () => {
+  primaryPointerDown = undefined;
+  selectionManager.clearHover();
+});
+
+selectionCanvas.addEventListener("pointercancel", () => {
+  primaryPointerDown = undefined;
+  selectionManager.clearHover();
+});
+
+world.camera.projection.onChanged.add(() => {
+  selectionManager.invalidateCandidateSession();
+});
+
+world.camera.controls.addEventListener("rest", () => {
+  selectionManager.invalidateCandidateSession();
+  fragments.core.update(true);
+});
+
+viewport.addEventListener("resize", () => {
+  selectionManager.invalidateCandidateSession();
+});
+
 // Clipper Setup
 const clipper = components.get(OBC.Clipper);
+clipper.onAfterCreate.add(() => selectionManager.invalidateCandidateSession());
+clipper.onAfterDelete.add(() => selectionManager.invalidateCandidateSession());
+clipper.onAfterDrag.add(() => selectionManager.invalidateCandidateSession());
 viewport.ondblclick = () => {
   if (clipper.enabled) clipper.create(world);
 };
@@ -183,6 +266,13 @@ fragments.list.onItemSet.add(async ({ value: model }) => {
   };
   world.scene.three.add(model.object);
   await fragments.core.update(true);
+  selectionManager.invalidateCandidateSession();
+});
+
+fragments.list.onItemDeleted.add((modelId) => {
+  modelProvenance.unregisterModel(modelId);
+  selectionMetadata.clearCache(modelId);
+  selectionManager.invalidateCandidateSession();
 });
 
 // Viewport Layouts
@@ -196,6 +286,7 @@ viewport.append(viewportSettings);
 const [viewportGrid] = BUI.Component.create(TEMPLATES.viewportGridTemplate, {
   components,
   world,
+  selectionManager,
 });
 
 viewport.append(viewportGrid);
@@ -214,6 +305,8 @@ const [contentGrid] = BUI.Component.create<
   components,
   id: CONTENT_GRID_ID,
   viewportTemplate: viewportCardTemplate,
+  selectionManager,
+  modelProvenance,
 });
 
 const setInitialLayout = () => {

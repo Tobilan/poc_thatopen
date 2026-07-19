@@ -2,15 +2,17 @@ import * as BUI from "@thatopen/ui";
 import * as CUI from "@thatopen/ui-obc";
 import * as OBC from "@thatopen/components";
 import { appIcons } from "../../globals";
+import type { DirectIfcModelProvenance } from "../../viewer/robot-tasks";
 
 export interface ModelsPanelState {
   components: OBC.Components;
+  modelProvenance: DirectIfcModelProvenance;
 }
 
 export const modelsPanelTemplate: BUI.StatefullComponent<ModelsPanelState> = (
   state,
 ) => {
-  const { components } = state;
+  const { components, modelProvenance } = state;
 
   const ifcLoader = components.get(OBC.IfcLoader);
   const fragments = components.get(OBC.FragmentsManager);
@@ -43,7 +45,17 @@ export const modelsPanelTemplate: BUI.StatefullComponent<ModelsPanelState> = (
         const buffer = await file.arrayBuffer();
         const bytes = new Uint8Array(buffer);
         const modelId = await getModelId(file.name, bytes);
-        await ifcLoader.load(bytes, true, modelId);
+        modelProvenance.registerDirectIfcModel(modelId);
+        try {
+          const model = await ifcLoader.load(bytes, true, modelId);
+          if (model.modelId !== modelId) {
+            modelProvenance.unregisterModel(modelId);
+          }
+          modelProvenance.registerDirectIfcModel(model.modelId);
+        } catch (error) {
+          modelProvenance.unregisterModel(modelId);
+          throw error;
+        }
         BUI.ContextMenu.removeMenus();
       } finally {
         target.loading = false;

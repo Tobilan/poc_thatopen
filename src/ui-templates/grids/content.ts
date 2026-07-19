@@ -6,6 +6,10 @@ import {
   CONTENT_GRID_ID,
   SMALL_COLUMN_WIDTH,
 } from "../../globals";
+import type {
+  DirectIfcModelProvenance,
+  ViewerObjectSelectionManager,
+} from "../../viewer/robot-tasks";
 
 type Viewer = "viewer";
 
@@ -29,12 +33,14 @@ export interface ContentGridState {
   components: OBC.Components;
   id: string;
   viewportTemplate: BUI.StatelessComponent;
+  selectionManager: ViewerObjectSelectionManager;
+  modelProvenance: DirectIfcModelProvenance;
 }
 
 export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
   state,
 ) => {
-  const { components } = state;
+  const { components, selectionManager, modelProvenance } = state;
 
   const onCreated = (e?: Element) => {
     if (!e) return;
@@ -44,11 +50,11 @@ export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
       // TODO: Add an AGENTS-compliant mission/task panel after the new domain model is integrated.
       models: {
         template: TEMPLATES.modelsPanelTemplate,
-        initialState: { components },
+        initialState: { components, modelProvenance },
       },
       elementData: {
         template: TEMPLATES.elementsDataPanelTemplate,
-        initialState: { components },
+        initialState: { components, selectionManager },
       },
       viewpoints: {
         template: TEMPLATES.viewpointsPanelTemplate,

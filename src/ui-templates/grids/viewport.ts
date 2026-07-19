@@ -3,6 +3,7 @@ import * as OBF from "@thatopen/components-front";
 import * as BUI from "@thatopen/ui";
 import { ViewerToolbarState, viewerToolbarTemplate } from "..";
 import { appIcons } from "../../globals";
+import type { ViewerObjectSelectionManager } from "../../viewer/robot-tasks";
 
 type BottomToolbar = { name: "bottomToolbar"; state: ViewerToolbarState };
 type LeftToolbar = { name: "leftToolbar"; state: {} };
@@ -14,15 +15,15 @@ type ViewportGridLayouts = ["main"];
 interface ViewportGridState {
   components: OBC.Components;
   world: OBC.World;
+  selectionManager: ViewerObjectSelectionManager;
 }
 
 export const viewportGridTemplate: BUI.StatefullComponent<ViewportGridState> = (
   state,
 ) => {
-  const { components, world } = state;
+  const { components, world, selectionManager } = state;
 
   const leftToolbarTemplate: BUI.StatefullComponent = (_: {}, update) => {
-    const highlighter = components.get(OBF.Highlighter);
     const lengthMeasurer = components.get(OBF.LengthMeasurement);
     const areaMeasurer = components.get(OBF.AreaMeasurement);
     const clipper = components.get(OBC.Clipper);
@@ -30,10 +31,14 @@ export const viewportGridTemplate: BUI.StatefullComponent<ViewportGridState> = (
     const areMeasurementsEnabled =
       lengthMeasurer.enabled || areaMeasurer.enabled;
 
+    const syncSelectionEnabled = () => {
+      selectionManager.setEnabled(
+        !lengthMeasurer.enabled && !areaMeasurer.enabled && !clipper.enabled,
+      );
+    };
+
     const disableAll = (exceptions?: ("clipper" | "length" | "area")[]) => {
       BUI.ContextMenu.removeMenus();
-      highlighter.clear("select");
-      highlighter.enabled = false;
       if (!exceptions?.includes("length")) lengthMeasurer.enabled = false;
       if (!exceptions?.includes("area")) areaMeasurer.enabled = false;
       if (!exceptions?.includes("clipper")) clipper.enabled = false;
@@ -42,27 +47,28 @@ export const viewportGridTemplate: BUI.StatefullComponent<ViewportGridState> = (
     const onLengthMeasurement = () => {
       disableAll(["length"]);
       lengthMeasurer.enabled = !lengthMeasurer.enabled;
-      highlighter.enabled = !lengthMeasurer.enabled;
+      syncSelectionEnabled();
       update();
     };
 
     const onAreaMeasurement = () => {
       disableAll(["area"]);
       areaMeasurer.enabled = !areaMeasurer.enabled;
-      highlighter.enabled = !areaMeasurer.enabled;
+      syncSelectionEnabled();
       update();
     };
 
     const onModelSection = () => {
       disableAll(["clipper"]);
       clipper.enabled = !clipper.enabled;
-      highlighter.enabled = !clipper.enabled;
+      syncSelectionEnabled();
       update();
     };
 
     const onMeasurementsClick = () => {
       lengthMeasurer.enabled = false;
       areaMeasurer.enabled = false;
+      syncSelectionEnabled();
       update();
     };
 
@@ -85,7 +91,7 @@ export const viewportGridTemplate: BUI.StatefullComponent<ViewportGridState> = (
     leftToolbar: { template: leftToolbarTemplate, initialState: {} },
     bottomToolbar: {
       template: viewerToolbarTemplate,
-      initialState: { components, world },
+      initialState: { components, world, selectionManager },
     },
   };
 
