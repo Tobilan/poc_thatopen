@@ -363,6 +363,22 @@ bim-grid[floating] .dashboard-card {
   font-size: 0.68rem;
 }
 
+.robot-task-sequence {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0 0.55rem 0.55rem;
+  color: var(--bim-ui_bg-contrast-80);
+  font-size: 0.68rem;
+  overflow-wrap: anywhere;
+}
+
+.robot-task-sequence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
 .robot-task-assignment-actions,
 .robot-task-form-actions {
   display: flex;

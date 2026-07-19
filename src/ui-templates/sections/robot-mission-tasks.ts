@@ -1,8 +1,13 @@
 import * as BUI from "@thatopen/ui";
-import { ROBOT_ACTION_TYPES, validateMission } from "../../domain/robot-tasks";
+import {
+  getTasksInExecutionOrder,
+  ROBOT_ACTION_TYPES,
+  validateMission,
+} from "../../domain/robot-tasks";
 import type {
   RobotActionProperties,
   RobotActionType,
+  RobotMission,
   RobotObjectReference,
   RobotTask,
   RobotTaskTime,
@@ -76,6 +81,37 @@ const taskIssues = (
   taskId: string,
 ) => issues.filter((issue) => issue.taskId === taskId);
 
+/**
+ * Resolves the named incoming and outgoing sequence relations for one task.
+ *
+ * The display uses the stored dependency type instead of assuming a particular
+ * relation. The move controls create FINISH_START edges, while this helper also
+ * keeps any future valid sequence type understandable in the panel.
+ *
+ * @param mission Mission containing the tasks and sequence relations to inspect.
+ * @param task Task for which predecessor and successor labels are requested.
+ * @returns Human-readable incoming and outgoing dependency labels.
+ */
+const taskSequenceLabels = (mission: RobotMission, task: RobotTask) => {
+  const taskNames = new Map(
+    mission.tasks.map((candidate) => [candidate.id, candidate.name]),
+  );
+  const label = (taskId: string, sequenceType: string) =>
+    `${taskNames.get(taskId) ?? taskId} (${sequenceType})`;
+  return {
+    predecessors: mission.sequences
+      .filter((sequence) => sequence.successorTaskId === task.id)
+      .map((sequence) =>
+        label(sequence.predecessorTaskId, sequence.sequenceType),
+      ),
+    successors: mission.sequences
+      .filter((sequence) => sequence.predecessorTaskId === task.id)
+      .map((sequence) =>
+        label(sequence.successorTaskId, sequence.sequenceType),
+      ),
+  };
+};
+
 /** Renders a compact list of blocking errors and non-blocking warnings. */
 const validationList = (issues: readonly RobotTaskValidationIssue[]) => {
   if (!issues.length) {
@@ -132,17 +168,31 @@ const readTaskTime = (form: FormData): RobotTaskTime | undefined => {
 /** Renders the task editor and assignment controls for one executable task. */
 const taskTemplate = (
   task: RobotTask,
+  executionPosition: number,
+  predecessors: readonly string[],
+  successors: readonly string[],
   issues: readonly RobotTaskValidationIssue[],
   selectedReference: RobotObjectReference | undefined,
   onSave: (event: SubmitEvent) => void,
   onDelete: () => void,
   onAssign: (role: "target" | "affected" | "start" | "destination") => void,
+  onMove: (direction: "up" | "down") => void,
+  canMoveUp: boolean,
+  canMoveDown: boolean,
 ) => BUI.html`
   <details class="robot-task-card" open>
     <summary>
-      <span>${task.name}</span>
+      <span>${executionPosition}. ${task.name}</span>
       <span class="robot-task-action">${task.actionType}</span>
     </summary>
+    <div class="robot-task-sequence">
+      <span><strong>Predecessor:</strong> ${predecessors.length ? predecessors.join(" | ") : "None"}</span>
+      <span><strong>Successor:</strong> ${successors.length ? successors.join(" | ") : "None"}</span>
+      <div class="robot-task-sequence-actions">
+        <button type="button" ?disabled=${!canMoveUp} @click=${() => onMove("up")}>Move up</button>
+        <button type="button" ?disabled=${!canMoveDown} @click=${() => onMove("down")}>Move down</button>
+      </div>
+    </div>
     <form @submit=${onSave} class="robot-task-form">
       <div class="robot-task-fields two-columns">
         <label>Task name<input name="name" required value=${task.name} /></label>
@@ -219,6 +269,9 @@ const robotMissionTasksContentTemplate: BUI.StatefullComponent<
   const activeMissionId = activeMission?.id;
   const validationIssues = activeMission ? validateMission(activeMission) : [];
   const selectedReference = selectionManager.getSnapshot().confirmedReference;
+  const orderedTasks = activeMission
+    ? getTasksInExecutionOrder(activeMission.tasks, activeMission.sequences)
+    : [];
 
   const updateView = (
     update: Partial<
@@ -265,15 +318,18 @@ const robotMissionTasksContentTemplate: BUI.StatefullComponent<
     const name = optionalText(form, "taskName");
     const actionType = form.get("newTaskAction") as RobotActionType;
     if (!name) return;
-    const notice = runCommand(
-      () =>
-        missionService.addTask(activeMission.id, {
-          id: createId("task"),
-          name,
-          actionType,
-        }),
-      "Task draft stored. Assign its IFC references and resolve validation errors.",
-    );
+    const taskId = createId("task");
+    const notice = runCommand(() => {
+      missionService.addTask(activeMission.id, {
+        id: taskId,
+        name,
+        actionType,
+      });
+      missionService.setTaskExecutionOrder(activeMission.id, [
+        ...orderedTasks.map((task) => task.id),
+        taskId,
+      ]);
+    }, "Task draft stored. Assign its IFC references and resolve validation errors.");
     updateView({ notice });
   };
 
@@ -304,9 +360,42 @@ const robotMissionTasksContentTemplate: BUI.StatefullComponent<
 
   const onDeleteTask = (task: RobotTask) => () => {
     if (!activeMission) return;
+    const notice = runCommand(() => {
+      missionService.deleteTask(activeMission.id, task.id);
+      missionService.setTaskExecutionOrder(
+        activeMission.id,
+        orderedTasks
+          .filter((candidate) => candidate.id !== task.id)
+          .map((candidate) => candidate.id),
+      );
+    }, "Task deleted and the remaining FINISH_START sequence was updated.");
+    updateView({ notice });
+  };
+
+  /** Moves one task one position within the persisted linear mission plan. */
+  const onMoveTask = (task: RobotTask) => (direction: "up" | "down") => {
+    if (!activeMission) return;
+    const currentIndex = orderedTasks.findIndex(
+      (candidate) => candidate.id === task.id,
+    );
+    const targetIndex =
+      direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (
+      currentIndex < 0 ||
+      targetIndex < 0 ||
+      targetIndex >= orderedTasks.length
+    ) {
+      return;
+    }
+    const orderedTaskIds = orderedTasks.map((candidate) => candidate.id);
+    [orderedTaskIds[currentIndex], orderedTaskIds[targetIndex]] = [
+      orderedTaskIds[targetIndex],
+      orderedTaskIds[currentIndex],
+    ];
     const notice = runCommand(
-      () => missionService.deleteTask(activeMission.id, task.id),
-      "Task deleted.",
+      () =>
+        missionService.setTaskExecutionOrder(activeMission.id, orderedTaskIds),
+      "Task order stored as FINISH_START sequence relations.",
     );
     updateView({ notice });
   };
@@ -378,16 +467,26 @@ const robotMissionTasksContentTemplate: BUI.StatefullComponent<
                   <button type="submit">Add executable task</button>
                 </form>
                 <div class="robot-task-list">
-                  ${activeMission.tasks.map((task) =>
-                    taskTemplate(
+                  ${orderedTasks.map((task, index) => {
+                    const sequenceLabels = taskSequenceLabels(
+                      activeMission,
                       task,
+                    );
+                    return taskTemplate(
+                      task,
+                      index + 1,
+                      sequenceLabels.predecessors,
+                      sequenceLabels.successors,
                       taskIssues(validationIssues, task.id),
                       selectedReference,
                       onSaveTask(task),
                       onDeleteTask(task),
                       onAssign(task),
-                    ),
-                  )}
+                      onMoveTask(task),
+                      index > 0,
+                      index < orderedTasks.length - 1,
+                    );
+                  })}
                 </div>
               </section>
             `

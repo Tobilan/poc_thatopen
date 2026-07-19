@@ -192,3 +192,128 @@ export const addTaskSequence = (
   if (errors.length) throw new RobotTaskDomainError(errors[0].message);
   return { ...mission, sequences: nextSequences, updatedAt: now };
 };
+
+/**
+ * Orders executable tasks by their dependency graph while retaining hierarchy
+ * order as the stable tie-breaker for unrelated tasks.
+ *
+ * A valid sequence graph can contain independent branches. In that case there
+ * is more than one legal execution order, so the order in RobotMission.tasks
+ * provides deterministic presentation order. Invalid endpoints are ignored for
+ * ordering because validateTaskSequence reports them separately. A cycle cannot
+ * produce a full topological order, therefore the original hierarchy order is
+ * returned unchanged so the UI can still show every task beside validation
+ * errors instead of silently hiding tasks.
+ *
+ * @param tasks Executable child tasks in their current mission hierarchy order.
+ * @param sequences Directed temporal dependencies between those child tasks.
+ * @returns Every task in deterministic execution order when acyclic.
+ */
+export const getTasksInExecutionOrder = (
+  tasks: readonly RobotTask[],
+  sequences: readonly RobotTaskSequence[],
+): RobotTask[] => {
+  // Keeps unrelated tasks stable when multiple nodes become executable together.
+  const hierarchyIndex = new Map(tasks.map((task, index) => [task.id, index]));
+
+  // Each valid predecessor maps to the task IDs that become available after it.
+  const successors = new Map<string, string[]>();
+
+  // Counts unmet predecessor relations for every known task.
+  const incomingEdgeCount = new Map(tasks.map((task) => [task.id, 0]));
+  for (const sequence of sequences) {
+    if (
+      !hierarchyIndex.has(sequence.predecessorTaskId) ||
+      !hierarchyIndex.has(sequence.successorTaskId)
+    ) {
+      continue;
+    }
+    const successorIds = successors.get(sequence.predecessorTaskId) ?? [];
+    successorIds.push(sequence.successorTaskId);
+    successors.set(sequence.predecessorTaskId, successorIds);
+    incomingEdgeCount.set(
+      sequence.successorTaskId,
+      (incomingEdgeCount.get(sequence.successorTaskId) ?? 0) + 1,
+    );
+  }
+
+  // Tasks with no unresolved predecessor are candidates for the next position.
+  const available = tasks.filter(
+    (task) => incomingEdgeCount.get(task.id) === 0,
+  );
+  const orderedTasks: RobotTask[] = [];
+  while (available.length) {
+    available.sort(
+      (first, second) =>
+        (hierarchyIndex.get(first.id) ?? 0) -
+        (hierarchyIndex.get(second.id) ?? 0),
+    );
+    const current = available.shift();
+    if (!current) break;
+    orderedTasks.push(current);
+    for (const successorId of successors.get(current.id) ?? []) {
+      const remainingEdges = (incomingEdgeCount.get(successorId) ?? 0) - 1;
+      incomingEdgeCount.set(successorId, remainingEdges);
+      if (remainingEdges === 0) {
+        const successor = tasks.find((task) => task.id === successorId);
+        if (successor) available.push(successor);
+      }
+    }
+  }
+
+  return orderedTasks.length === tasks.length ? orderedTasks : [...tasks];
+};
+
+/**
+ * Replaces a mission's visible task order and its execution dependencies with
+ * one complete FINISH_START chain.
+ *
+ * The task array remains the mission's nesting hierarchy and is reordered for
+ * deterministic display and future IfcRelNests mapping. The generated sequence
+ * chain separately expresses temporal order for a later IfcRelSequence mapper.
+ * Replacing rather than appending dependencies prevents obsolete edges from
+ * creating cycles after a user moves a task. The supplied IDs must be an exact,
+ * duplicate-free permutation of the mission's current child task IDs.
+ *
+ * @param mission Mission whose task hierarchy and execution chain are replaced.
+ * @param orderedTaskIds Complete ordered list of existing mission task IDs.
+ * @param now ISO 8601 timestamp recorded as the mission modification time.
+ * @returns An immutable mission with reordered tasks and FINISH_START edges.
+ * @throws RobotTaskDomainError When the supplied order omits, repeats, or adds a task.
+ */
+export const setMissionTaskExecutionOrder = (
+  mission: RobotMission,
+  orderedTaskIds: readonly string[],
+  now = new Date().toISOString(),
+): RobotMission => {
+  const taskById = new Map(mission.tasks.map((task) => [task.id, task]));
+  const suppliedIds = new Set(orderedTaskIds);
+  if (
+    orderedTaskIds.length !== mission.tasks.length ||
+    suppliedIds.size !== orderedTaskIds.length ||
+    orderedTaskIds.some((taskId) => !taskById.has(taskId))
+  ) {
+    throw new RobotTaskDomainError(
+      "Execution order must contain every mission task exactly once.",
+    );
+  }
+
+  // The permutation checks above prove every lookup resolves to a current child task.
+  const orderedTasks = orderedTaskIds.map((taskId) => taskById.get(taskId)!);
+
+  // One generated edge per adjacent pair gives the UI a clear linear execution plan.
+  const sequences = orderedTaskIds.slice(1).map((successorTaskId, index) =>
+    createTaskSequence({
+      id: `execution-order-${index + 1}`,
+      predecessorTaskId: orderedTaskIds[index],
+      successorTaskId,
+      sequenceType: "FINISH_START",
+    }),
+  );
+
+  const errors = validateTaskSequence(orderedTasks, sequences).filter(
+    (issue) => issue.severity === "error",
+  );
+  if (errors.length) throw new RobotTaskDomainError(errors[0].message);
+  return { ...mission, tasks: orderedTasks, sequences, updatedAt: now };
+};

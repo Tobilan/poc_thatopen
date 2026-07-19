@@ -393,3 +393,52 @@ test("service rejects missing mission and task identifiers", () => {
   );
   assert.equal(fixture.repository.saveCount, saveCountBeforeMissingTask);
 });
+
+/** Verifies that the application service persists a complete linear execution plan. */
+test("service reorders tasks into a FINISH_START execution chain", () => {
+  const fixture = createServiceFixture();
+  createMissionWithTask(fixture, "task-a");
+  fixture.service.addTask("mission-1", {
+    id: "task-b",
+    name: "Task B",
+    actionType: "NAVIGATE_TO",
+  });
+  fixture.service.addTask("mission-1", {
+    id: "task-c",
+    name: "Task C",
+    actionType: "NAVIGATE_TO",
+  });
+
+  fixture.clock.set(stateUpdatedAt);
+  const mission = fixture.service.setTaskExecutionOrder("mission-1", [
+    "task-c",
+    "task-a",
+    "task-b",
+  ]);
+
+  assert.deepEqual(
+    mission.tasks.map((task) => task.id),
+    ["task-c", "task-a", "task-b"],
+  );
+  assert.deepEqual(
+    mission.sequences.map((sequence) => ({
+      predecessorTaskId: sequence.predecessorTaskId,
+      successorTaskId: sequence.successorTaskId,
+      sequenceType: sequence.sequenceType,
+    })),
+    [
+      {
+        predecessorTaskId: "task-c",
+        successorTaskId: "task-a",
+        sequenceType: "FINISH_START",
+      },
+      {
+        predecessorTaskId: "task-a",
+        successorTaskId: "task-b",
+        sequenceType: "FINISH_START",
+      },
+    ],
+  );
+  assert.equal(mission.updatedAt, stateUpdatedAt);
+  assert.deepEqual(fixture.repository.get("mission-1"), mission);
+});

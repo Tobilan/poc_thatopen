@@ -9,6 +9,7 @@ import {
   createRobotMission,
   createRobotTask,
   createTaskSequence,
+  setMissionTaskExecutionOrder,
   validateMission,
 } from "../../domain/robot-tasks";
 import type {
@@ -242,6 +243,30 @@ export class RobotMissionService {
     const now = this.clock.now();
     const sequence = createTaskSequence(input);
     return this.saveMission(addTaskSequence(mission, sequence, now));
+  }
+
+  /**
+   * Replaces a mission's displayed hierarchy order and execution edges with a
+   * complete, linear FINISH_START plan.
+   *
+   * The supplied IDs are validated by the domain as an exact permutation of
+   * current child tasks. This command deliberately does not involve viewer
+   * state, storage details, or IFC serialization; it persists only the new
+   * RobotMission.tasks hierarchy order and RobotMission.sequences relations.
+   *
+   * @param missionId Identifier of the mission whose execution order changes.
+   * @param orderedTaskIds Every child task ID in the intended execution order.
+   * @returns The persisted mission with regenerated FINISH_START dependencies.
+   */
+  setTaskExecutionOrder(
+    missionId: string,
+    orderedTaskIds: readonly string[],
+  ): RobotMission {
+    const mission = this.requireMission(missionId);
+    const now = this.clock.now();
+    return this.saveMission(
+      setMissionTaskExecutionOrder(mission, orderedTaskIds, now),
+    );
   }
 
   /**

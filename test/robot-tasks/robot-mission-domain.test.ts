@@ -11,6 +11,8 @@ import {
   createRobotMission,
   createRobotTask,
   createTaskSequence,
+  getTasksInExecutionOrder,
+  setMissionTaskExecutionOrder,
   validateMission,
   validateMovementTask,
   validateObjectInteractionTask,
@@ -287,5 +289,79 @@ test("sequence validation detects dependency cycles", () => {
     validateTaskSequence([firstTask, secondTask], sequences).some(
       (issue) => issue.code === "SEQUENCE_CYCLE",
     ),
+  );
+});
+
+/** Verifies that a persisted linear order creates deterministic FINISH_START edges. */
+test("execution ordering reorders nested tasks and replaces the sequence chain", () => {
+  const first = createRobotTask(
+    {
+      id: "first",
+      name: "First",
+      actionType: "NAVIGATE_TO",
+      targetObjects: [startSpace],
+    },
+    timestamp,
+  );
+  const second = createRobotTask(
+    {
+      id: "second",
+      name: "Second",
+      actionType: "NAVIGATE_TO",
+      targetObjects: [targetSpace],
+    },
+    timestamp,
+  );
+  const third = createRobotTask(
+    {
+      id: "third",
+      name: "Third",
+      actionType: "PASS_THROUGH",
+      targetObjects: [door],
+    },
+    timestamp,
+  );
+  let mission = createRobotMission(
+    { id: "ordered-mission", name: "Ordered mission" },
+    timestamp,
+  );
+  mission = addTaskToMission(mission, first, timestamp);
+  mission = addTaskToMission(mission, second, timestamp);
+  mission = addTaskToMission(mission, third, timestamp);
+
+  const reorderedMission = setMissionTaskExecutionOrder(
+    mission,
+    [third.id, first.id, second.id],
+    timestamp,
+  );
+
+  assert.deepEqual(
+    reorderedMission.tasks.map((task) => task.id),
+    ["third", "first", "second"],
+  );
+  assert.deepEqual(reorderedMission.sequences, [
+    {
+      id: "execution-order-1",
+      predecessorTaskId: "third",
+      successorTaskId: "first",
+      sequenceType: "FINISH_START",
+    },
+    {
+      id: "execution-order-2",
+      predecessorTaskId: "first",
+      successorTaskId: "second",
+      sequenceType: "FINISH_START",
+    },
+  ]);
+  assert.deepEqual(
+    getTasksInExecutionOrder(
+      reorderedMission.tasks,
+      reorderedMission.sequences,
+    ).map((task) => task.id),
+    ["third", "first", "second"],
+  );
+  assert.deepEqual(
+    validateTaskSequence(reorderedMission.tasks, reorderedMission.sequences),
+    [],
   );
 });
