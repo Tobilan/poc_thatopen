@@ -284,6 +284,18 @@ bim-grid[floating] .dashboard-card {
   gap: 0.625rem;
 }
 
+.robot-mission-panel {
+  color: var(--bim-ui_bg-contrast-80);
+}
+
+.robot-mission-panel button,
+.robot-mission-panel input,
+.robot-mission-panel select,
+.robot-mission-panel textarea,
+.robot-mission-panel option {
+  color: var(--bim-ui_bg-contrast-80);
+}
+
 .robot-mission-create,
 .robot-task-create,
 .robot-task-fields.two-columns {
@@ -314,7 +326,7 @@ bim-grid[floating] .dashboard-card {
   padding: 0.35rem 0.45rem;
   border: 1px solid var(--bim-ui_bg-contrast-40);
   border-radius: 0.2rem;
-  color: var(--bim-ui_bg-contrast-100);
+  color: var(--bim-ui_bg-contrast-80);
   background: var(--bim-ui_bg-contrast-20);
   font: inherit;
 }
@@ -402,8 +414,12 @@ bim-grid[floating] .dashboard-card {
 
 .robot-task-timing summary {
   cursor: pointer;
-  color: var(--bim-ui_bg-contrast-80);
+  color: var(--bim-ui_bg-contrast-80) !important;
   font-size: 0.7rem;
+}
+
+.robot-task-timing summary::marker {
+  color: var(--bim-ui_bg-contrast-80);
 }
 
 .robot-task-timing[open] summary {
