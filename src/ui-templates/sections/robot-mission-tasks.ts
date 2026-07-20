@@ -5,7 +5,6 @@ import {
   validateMission,
 } from "../../domain/robot-tasks";
 import type {
-  RobotActionProperties,
   RobotActionType,
   RobotMission,
   RobotObjectReference,
@@ -51,17 +50,6 @@ const optionalText = (form: FormData, field: string) => {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed || undefined;
-};
-
-/** Splits a multiline text field into the non-empty task conditions it contains. */
-const optionalLines = (form: FormData, field: string) => {
-  const value = optionalText(form, field);
-  if (!value) return undefined;
-  const lines = value
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  return lines.length ? lines : undefined;
 };
 
 /** Formats an object reference without treating local Fragments IDs as durable IFC IDs. */
@@ -129,24 +117,6 @@ const validationList = (issues: readonly RobotTaskValidationIssue[]) => {
       )}
     </ul>
   `;
-};
-
-/** Creates a replacement RobotActionProperties value from one task-edit form. */
-const readActionProperties = (
-  form: FormData,
-): RobotActionProperties | undefined => {
-  const properties: RobotActionProperties = {
-    targetState: optionalText(form, "targetState"),
-    targetObjectRole: optionalText(form, "targetObjectRole"),
-    affectedObjectRole: optionalText(form, "affectedObjectRole"),
-    requiredCapability: optionalText(form, "requiredCapability"),
-    preconditions: optionalLines(form, "preconditions"),
-    postconditions: optionalLines(form, "postconditions"),
-    successCondition: optionalText(form, "successCondition"),
-  };
-  return Object.values(properties).some((value) => value !== undefined)
-    ? properties
-    : undefined;
 };
 
 /** Creates a replacement RobotTaskTime value from one task-edit form. */
@@ -219,19 +189,6 @@ const taskTemplate = (
         <span><strong>MOVE start:</strong> ${referenceLabel(task.startReference)}</span>
         <span><strong>MOVE target:</strong> ${referenceLabel(task.targetReference)}</span>
       </div>
-
-      <fieldset>
-        <legend>Task-level RobotAction properties</legend>
-        <div class="robot-task-fields two-columns">
-          <label>Target state<input name="targetState" value=${task.properties?.targetState ?? ""} /></label>
-          <label>Target role<input name="targetObjectRole" value=${task.properties?.targetObjectRole ?? ""} /></label>
-          <label>Affected role<input name="affectedObjectRole" value=${task.properties?.affectedObjectRole ?? ""} /></label>
-          <label>Required capability<input name="requiredCapability" value=${task.properties?.requiredCapability ?? ""} /></label>
-        </div>
-        <label>Preconditions (one per line)<textarea name="preconditions">${task.properties?.preconditions?.join("\n") ?? ""}</textarea></label>
-        <label>Postconditions (one per line)<textarea name="postconditions">${task.properties?.postconditions?.join("\n") ?? ""}</textarea></label>
-        <label>Success condition<input name="successCondition" value=${task.properties?.successCondition ?? ""} /></label>
-      </fieldset>
 
       <fieldset>
         <legend>Optional task timing</legend>
@@ -345,13 +302,11 @@ const robotMissionTasksContentTemplate: BUI.StatefullComponent<
     const name = optionalText(form, "name");
     const actionType = form.get("actionType") as RobotActionType;
     if (!name) return;
-    const properties = readActionProperties(form);
     const time = readTaskTime(form);
     const notice = runCommand(() => {
       missionService.updateTask(activeMission.id, task.id, {
         name,
         actionType,
-        properties,
         time,
       });
     }, "Task details stored. Review validation before treating the mission as complete.");
