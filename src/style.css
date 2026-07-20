@@ -278,10 +278,44 @@ bim-grid[floating] .dashboard-card {
 .robot-task-create,
 .robot-task-form,
 .robot-task-reference-list,
-.robot-task-list {
+.robot-task-list,
+.robot-mission-storage-content {
   display: flex;
   flex-direction: column;
   gap: 0.625rem;
+}
+
+.robot-mission-storage-content {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.robot-mission-storage-content:disabled {
+  opacity: 0.45;
+}
+
+.robot-mission-storage-description {
+  margin: 0;
+  font-size: 0.7rem;
+}
+
+.robot-mission-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.robot-mission-heading h3 {
+  margin: 0;
+}
+
+.robot-mission-delete-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
 }
 
 .robot-mission-panel {
@@ -447,7 +481,7 @@ bim-grid[floating] .dashboard-card {
   color: #f1bf5a;
 }
 
-.robot-task-form-actions .danger {
+.robot-mission-panel .danger {
   color: #ffc2c2;
 }
 

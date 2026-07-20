@@ -13,6 +13,10 @@ import type {
   RobotTaskValidationIssue,
 } from "../../domain/robot-tasks";
 import { RobotMissionService } from "../../application/robot-tasks";
+import type {
+  RobotMissionStorageMode,
+  RobotMissionStorageSelection,
+} from "../../application/robot-tasks";
 import { appIcons } from "../../globals";
 import type { ViewerObjectSelectionManager } from "../../viewer/robot-tasks";
 
@@ -20,6 +24,9 @@ import type { ViewerObjectSelectionManager } from "../../viewer/robot-tasks";
 export interface RobotMissionTasksPanelState {
   /** Application service that owns new-domain mission commands and persistence. */
   missionService: RobotMissionService;
+
+  /** Selectable persistence boundary shared with the mission service. */
+  missionStorageSelection: RobotMissionStorageSelection;
 
   /** Viewer adapter that exposes only confirmed, stable IFC object references. */
   selectionManager: ViewerObjectSelectionManager;
@@ -33,10 +40,16 @@ interface RobotMissionTasksViewState extends RobotMissionTasksPanelState {
   /** Informational or error text produced by the most recent UI command. */
   notice?: string;
 
+  /** Mission awaiting a second, explicit deletion confirmation click. */
+  pendingMissionDeletionId?: string;
+
   /** Requests a render after a UI command changes persisted or local state. */
   refresh: (
     update?: Partial<
-      Pick<RobotMissionTasksViewState, "activeMissionId" | "notice">
+      Pick<
+        RobotMissionTasksViewState,
+        "activeMissionId" | "notice" | "pendingMissionDeletionId"
+      >
     >,
   ) => void;
 }
@@ -50,6 +63,28 @@ const optionalText = (form: FormData, field: string) => {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed || undefined;
+};
+
+/** Returns the explanatory text shown beneath the storage selector. */
+const storageModeDescription = (mode: RobotMissionStorageMode): string => {
+  if (mode === "local-storage") {
+    return "Mission data is stored in this browser and survives page reloads.";
+  }
+  if (mode === "backend") {
+    return "Backend persistence will be added later. Select another mode to edit missions.";
+  }
+  return "Mission data is kept in memory and discarded when the page reloads.";
+};
+
+/** Returns the status message displayed immediately after a storage change. */
+const storageModeNotice = (mode: RobotMissionStorageMode): string => {
+  if (mode === "local-storage") {
+    return "localStorage selected. Missions in this mode persist across browser reloads.";
+  }
+  if (mode === "backend") {
+    return "Backend storage is reserved for a future implementation. Mission editing is disabled.";
+  }
+  return "No storage selected. Missions remain only until this page is reloaded.";
 };
 
 /** Formats an object reference without treating local Fragments IDs as durable IFC IDs. */
@@ -218,7 +253,9 @@ const taskTemplate = (
 const robotMissionTasksContentTemplate: BUI.StatefullComponent<
   RobotMissionTasksViewState
 > = (state) => {
-  const { missionService, selectionManager } = state;
+  const { missionService, missionStorageSelection, selectionManager } = state;
+  const storageMode = missionStorageSelection.getMode();
+  const storageAvailable = missionStorageSelection.isAvailable(storageMode);
   const missions = missionService.listMissions();
   const activeMission =
     missions.find((mission) => mission.id === state.activeMissionId) ??
@@ -292,7 +329,57 @@ const robotMissionTasksContentTemplate: BUI.StatefullComponent<
 
   const selectMission = (event: Event) => {
     const select = event.target as HTMLSelectElement;
-    updateView({ activeMissionId: select.value, notice: undefined });
+    state.refresh({
+      activeMissionId: select.value,
+      notice: undefined,
+      pendingMissionDeletionId: undefined,
+    });
+  };
+
+  /** Changes the active repository without copying missions between stores. */
+  const selectStorageMode = (event: Event) => {
+    const select = event.target as HTMLSelectElement;
+    const mode = select.value as RobotMissionStorageMode;
+    missionStorageSelection.selectMode(mode);
+    const firstMission = missionService.listMissions()[0];
+    state.refresh({
+      activeMissionId: firstMission?.id,
+      notice: storageModeNotice(mode),
+      pendingMissionDeletionId: undefined,
+    });
+  };
+
+  /** Arms the explicit second click required before deleting a whole mission. */
+  const requestMissionDeletion = () => {
+    if (!activeMission) return;
+    state.refresh({
+      pendingMissionDeletionId: activeMission.id,
+      notice: "Confirm deletion to remove the mission and every child task.",
+    });
+  };
+
+  /** Cancels a pending whole-mission deletion without changing domain data. */
+  const cancelMissionDeletion = () => {
+    state.refresh({ pendingMissionDeletionId: undefined, notice: undefined });
+  };
+
+  /** Deletes the armed mission aggregate, including all of its child tasks. */
+  const onDeleteMission = () => {
+    if (!activeMission || state.pendingMissionDeletionId !== activeMission.id) {
+      return;
+    }
+    const notice = runCommand(
+      () => missionService.deleteMission(activeMission.id),
+      "Mission and all of its tasks were deleted.",
+    );
+    const nextMission = missions.find(
+      (mission) => mission.id !== activeMission.id,
+    );
+    state.refresh({
+      activeMissionId: nextMission?.id,
+      notice,
+      pendingMissionDeletionId: undefined,
+    });
   };
 
   const onSaveTask = (task: RobotTask) => (event: SubmitEvent) => {
@@ -380,11 +467,23 @@ const robotMissionTasksContentTemplate: BUI.StatefullComponent<
 
   return BUI.html`
     <div class="robot-mission-panel">
-      <form class="robot-mission-create" @submit=${onCreateMission}>
-        <label>Mission name<input name="missionName" required placeholder="e.g. Floor 1 delivery" /></label>
-        <label>Description<input name="missionDescription" placeholder="Optional mission goal" /></label>
-        <button type="submit">Create mission</button>
-      </form>
+      <label class="robot-mission-storage-picker">Mission storage
+        <select @change=${selectStorageMode}>
+          <option value="none" ?selected=${storageMode === "none"}>No storage (current page only)</option>
+          <option value="local-storage" ?selected=${storageMode === "local-storage"}>localStorage (this browser)</option>
+          <option value="backend" ?selected=${storageMode === "backend"}>Backend (not implemented)</option>
+        </select>
+      </label>
+      <p class="robot-mission-storage-description">
+        ${storageModeDescription(storageMode)}
+      </p>
+
+      <fieldset class="robot-mission-storage-content" ?disabled=${!storageAvailable}>
+        <form class="robot-mission-create" @submit=${onCreateMission}>
+          <label>Mission name<input name="missionName" required placeholder="e.g. Floor 1 delivery" /></label>
+          <label>Description<input name="missionDescription" placeholder="Optional mission goal" /></label>
+          <button type="submit">Create mission</button>
+        </form>
 
       ${
         missions.length
@@ -400,13 +499,25 @@ const robotMissionTasksContentTemplate: BUI.StatefullComponent<
             `
           : BUI.html`<p class="robot-task-empty">Create a mission to begin authoring executable robot tasks.</p>`
       }
-      ${state.notice ? BUI.html`<p class="robot-task-notice">${state.notice}</p>` : null}
+        ${state.notice ? BUI.html`<p class="robot-task-notice">${state.notice}</p>` : null}
 
       ${
         activeMission
           ? BUI.html`
               <section class="robot-mission-editor">
-                <h3>${activeMission.name}</h3>
+                <div class="robot-mission-heading">
+                  <h3>${activeMission.name}</h3>
+                  ${
+                    state.pendingMissionDeletionId === activeMission.id
+                      ? BUI.html`
+                          <div class="robot-mission-delete-actions">
+                            <button type="button" class="danger" @click=${onDeleteMission}>Confirm deletion</button>
+                            <button type="button" @click=${cancelMissionDeletion}>Cancel</button>
+                          </div>
+                        `
+                      : BUI.html`<button type="button" class="danger" @click=${requestMissionDeletion}>Delete entire mission</button>`
+                  }
+                </div>
                 <p class="robot-task-draft-note">Draft changes are saved through the new mission repository. The validation list below must have no errors before this mission is ready for later execution or IFC mapping.</p>
                 ${validationList(validationIssues)}
                 <form class="robot-task-create" @submit=${onAddTask}>
@@ -447,6 +558,7 @@ const robotMissionTasksContentTemplate: BUI.StatefullComponent<
             `
           : null
       }
+      </fieldset>
     </div>
   `;
 };
@@ -459,7 +571,10 @@ export const robotMissionTasksPanelTemplate: BUI.StatefullComponent<
   let updateContent: (update: Partial<RobotMissionTasksViewState>) => void;
   const refresh = (
     update: Partial<
-      Pick<RobotMissionTasksViewState, "activeMissionId" | "notice">
+      Pick<
+        RobotMissionTasksViewState,
+        "activeMissionId" | "notice" | "pendingMissionDeletionId"
+      >
     > = {},
   ) => updateContent(update);
   const [content, contentUpdater] = BUI.Component.create<

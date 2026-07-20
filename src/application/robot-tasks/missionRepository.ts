@@ -1,5 +1,35 @@
 import type { RobotMission } from "../../domain/robot-tasks";
 
+/** Storage destinations offered by the robot-mission authoring UI. */
+export type RobotMissionStorageMode = "none" | "local-storage" | "backend";
+
+/**
+ * Application-facing control for selecting where mission aggregates are kept.
+ *
+ * Changing the mode changes the active repository; it does not copy missions
+ * between storage destinations. This keeps an explicit user choice from
+ * silently creating a durable browser copy of an in-memory draft.
+ */
+export interface RobotMissionStorageSelection {
+  /** @returns The storage destination currently used by mission commands. */
+  getMode(): RobotMissionStorageMode;
+
+  /**
+   * Selects the repository used by subsequent mission reads and writes.
+   *
+   * @param mode Desired mission storage destination.
+   */
+  selectMode(mode: RobotMissionStorageMode): void;
+
+  /**
+   * Reports whether a destination can currently accept mission commands.
+   *
+   * @param mode Storage destination whose implementation should be checked.
+   * @returns False for UI placeholders that are not implemented yet.
+   */
+  isAvailable(mode: RobotMissionStorageMode): boolean;
+}
+
 /**
  * Persistence port used by the robot-mission application service.
  *

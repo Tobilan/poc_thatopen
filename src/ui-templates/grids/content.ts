@@ -10,7 +10,10 @@ import type {
   DirectIfcModelProvenance,
   ViewerObjectSelectionManager,
 } from "../../viewer/robot-tasks";
-import type { RobotMissionService } from "../../application/robot-tasks";
+import type {
+  RobotMissionService,
+  RobotMissionStorageSelection,
+} from "../../application/robot-tasks";
 
 type Viewer = "viewer";
 
@@ -48,13 +51,19 @@ export interface ContentGridState {
   selectionManager: ViewerObjectSelectionManager;
   modelProvenance: DirectIfcModelProvenance;
   missionService: RobotMissionService;
+  missionStorageSelection: RobotMissionStorageSelection;
 }
 
 export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
   state,
 ) => {
-  const { components, selectionManager, modelProvenance, missionService } =
-    state;
+  const {
+    components,
+    selectionManager,
+    modelProvenance,
+    missionService,
+    missionStorageSelection,
+  } = state;
 
   const onCreated = (e?: Element) => {
     if (!e) return;
@@ -71,7 +80,11 @@ export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
       },
       robotMissionTasks: {
         template: TEMPLATES.robotMissionTasksPanelTemplate,
-        initialState: { missionService, selectionManager },
+        initialState: {
+          missionService,
+          missionStorageSelection,
+          selectionManager,
+        },
       },
       viewpoints: {
         template: TEMPLATES.viewpointsPanelTemplate,

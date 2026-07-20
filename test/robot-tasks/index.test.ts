@@ -9,6 +9,7 @@ import "./robot-mission-domain.test";
 import "./ifc-relation-mapper.test";
 import "./robot-mission-persistence.test";
 import "./robot-mission-service.test";
+import "./selectable-mission-repository.test";
 import "./selection-candidate-source.test";
 import "./viewer-selection-adapter.test";
 import "./viewer-object-selection-manager.test";

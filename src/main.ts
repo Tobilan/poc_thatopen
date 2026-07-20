@@ -13,7 +13,7 @@ import {
   ViewerObjectSelectionManager,
 } from "./viewer/robot-tasks";
 import { RobotMissionService } from "./application/robot-tasks";
-import { LocalStorageRobotMissionRepository } from "./persistence/robot-tasks";
+import { SelectableRobotMissionRepository } from "./persistence/robot-tasks";
 
 BUI.Manager.init();
 
@@ -145,11 +145,12 @@ const selectionManager = new ViewerObjectSelectionManager(
   selectionHighlightPort,
 );
 
-// The composition root chooses browser storage; the service remains independent
-// from localStorage, viewer selections, and any future IFC serialization.
-const robotMissionService = new RobotMissionService(
-  new LocalStorageRobotMissionRepository(window.localStorage),
+// Mission drafts use page-local memory by default. The panel can explicitly
+// switch this facade to localStorage; backend storage remains a disabled reserve.
+const robotMissionRepository = new SelectableRobotMissionRepository(
+  window.localStorage,
 );
+const robotMissionService = new RobotMissionService(robotMissionRepository);
 
 const selectionCanvas = world.renderer.three.domElement;
 let primaryPointerDown:
@@ -316,6 +317,7 @@ const [contentGrid] = BUI.Component.create<
   selectionManager,
   modelProvenance,
   missionService: robotMissionService,
+  missionStorageSelection: robotMissionRepository,
 });
 
 const setInitialLayout = () => {

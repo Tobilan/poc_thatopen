@@ -295,6 +295,22 @@ test("service deletes a task and only its incident sequence relations", () => {
   assert.equal(mission.updatedAt, stateUpdatedAt);
 });
 
+/** Verifies that deleting a mission removes its complete child-task aggregate. */
+test("service deletes an entire mission including all child tasks", () => {
+  const fixture = createServiceFixture();
+  createMissionWithTask(fixture, "task-a");
+  fixture.service.addTask("mission-1", {
+    id: "task-b",
+    name: "Task B",
+    actionType: "NAVIGATE_TO",
+  });
+
+  fixture.service.deleteMission("mission-1");
+
+  assert.equal(fixture.service.getMission("mission-1"), null);
+  assert.deepEqual(fixture.service.listMissions(), []);
+});
+
 /** Verifies role-aware, multi-object selection assignment and deduplication. */
 test("service assigns selected target and affected objects without duplicates", () => {
   const fixture = createServiceFixture();
