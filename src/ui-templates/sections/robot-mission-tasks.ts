@@ -190,15 +190,15 @@ const taskTemplate = (
         <span><strong>MOVE target:</strong> ${referenceLabel(task.targetReference)}</span>
       </div>
 
-      <fieldset>
-        <legend>Optional task timing</legend>
+      <details class="robot-task-timing">
+        <summary>Optional task timing</summary>
         <div class="robot-task-fields two-columns">
           <label>Schedule start<input name="scheduleStart" type="datetime-local" value=${task.time?.scheduleStart ?? ""} /></label>
           <label>Schedule finish<input name="scheduleFinish" type="datetime-local" value=${task.time?.scheduleFinish ?? ""} /></label>
           <label>Schedule duration<input name="scheduleDuration" placeholder="PT10M" value=${task.time?.scheduleDuration ?? ""} /></label>
           <label>Completion (0-1)<input name="completion" type="number" min="0" max="1" step="0.01" value=${task.time?.completion ?? ""} /></label>
         </div>
-      </fieldset>
+      </details>
 
       ${validationList(issues)}
       <div class="robot-task-form-actions">

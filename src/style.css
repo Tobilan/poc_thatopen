@@ -391,7 +391,7 @@ bim-grid[floating] .dashboard-card {
   overflow-wrap: anywhere;
 }
 
-.robot-task-form fieldset {
+.robot-task-timing {
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
@@ -400,10 +400,14 @@ bim-grid[floating] .dashboard-card {
   border: 1px solid var(--bim-ui_bg-contrast-40);
 }
 
-.robot-task-form legend {
-  padding: 0 0.25rem;
+.robot-task-timing summary {
+  cursor: pointer;
   color: var(--bim-ui_bg-contrast-80);
   font-size: 0.7rem;
+}
+
+.robot-task-timing[open] summary {
+  margin-bottom: 0.1rem;
 }
 
 .robot-task-validation {
