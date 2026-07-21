@@ -46,6 +46,7 @@ export type ContentGridLayouts = ["Viewer"];
 
 export interface ContentGridState {
   components: OBC.Components;
+  world: OBC.World;
   id: string;
   viewportTemplate: BUI.StatelessComponent;
   selectionManager: ViewerObjectSelectionManager;
@@ -59,6 +60,7 @@ export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
 ) => {
   const {
     components,
+    world,
     selectionManager,
     modelProvenance,
     missionService,
@@ -88,7 +90,7 @@ export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
       },
       viewpoints: {
         template: TEMPLATES.viewpointsPanelTemplate,
-        initialState: { components },
+        initialState: { components, world, selectionManager },
       },
       viewer: state.viewportTemplate,
     };
