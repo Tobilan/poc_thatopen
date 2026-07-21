@@ -485,6 +485,48 @@ bim-grid[floating] .dashboard-card {
   color: #ffc2c2;
 }
 
+.ifc-export-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--bim-ui_bg-contrast-40);
+  color: var(--bim-ui_bg-contrast-80);
+}
+
+.ifc-export-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+}
+
+.ifc-export-controls select {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 2rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--bim-ui_bg-contrast-40);
+  border-radius: 0.2rem;
+  color: var(--bim-ui_bg-contrast-80);
+  background: var(--bim-ui_bg-contrast-20);
+  font: inherit;
+}
+
+.ifc-export-description,
+.ifc-export-notice {
+  margin: 0;
+  color: var(--bim-ui_bg-contrast-80);
+  font-size: 0.7rem;
+}
+
+.ifc-export-notice {
+  padding: 0.45rem;
+  border-left: 3px solid var(--bim-ui_accent-base);
+  background: var(--bim-ui_bg-contrast-20);
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 850px) {
   .robot-mission-create,
   .robot-task-create,

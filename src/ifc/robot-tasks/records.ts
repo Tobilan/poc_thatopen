@@ -1,13 +1,18 @@
-import type { RobotTaskSequenceType } from "../../domain/robot-tasks";
+import type {
+  RobotTaskSequenceType,
+  RobotTaskStatus,
+} from "../../domain/robot-tasks";
 
 /** Discriminator values supported by the internal IFC-like record graph. */
 export type IfcRobotTaskRecordEntity =
   | "IfcTask"
   | "IfcTaskTime"
+  | "IfcWorkSchedule"
   | "IfcRelNests"
   | "IfcRelSequence"
   | "IfcRelAssignsToProcess"
   | "IfcRelAssignsToProduct"
+  | "IfcRelAssignsToControl"
   | "IfcRelDefinesByProperties"
   | "IfcPropertySet"
   | "IfcPropertySingleValue"
@@ -73,8 +78,45 @@ export interface IfcTaskRecord extends IfcRecordBase<"IfcTask"> {
   /** Optional longer task or mission description. */
   description?: string;
 
+  /** Stable domain ID written to IfcTask.Identification. */
+  identification: string;
+
+  /** USERDEFINED discriminator required by IfcTask.PredefinedType. */
+  objectType: "RobotMission" | "RobotTask";
+
+  /** Optional domain lifecycle state written to IfcTask.Status. */
+  status?: RobotTaskStatus;
+
+  /** Optional IFC integer priority from one (low) through four (critical). */
+  priority?: number;
+
   /** Direct IfcTask.TaskTime-style reference, never a property relation. */
   taskTime?: IfcRecordReference<"IfcTaskTime">;
+}
+
+/** Internal representation of the work schedule controlling one mission. */
+export interface IfcWorkScheduleRecord
+  extends IfcRecordBase<"IfcWorkSchedule"> {
+  /** Domain schedule ID, or a deterministic mission-derived fallback. */
+  sourceId: string;
+
+  /** Human-readable schedule name. */
+  name: string;
+
+  /** Stable value written to IfcWorkSchedule.Identification. */
+  identification: string;
+
+  /** Mission creation time required by IfcWorkControl.CreationDate. */
+  creationDate: string;
+
+  /** Planned schedule start, falling back to mission creation time. */
+  startTime: string;
+
+  /** Optional planned schedule finish. */
+  finishTime?: string;
+
+  /** Optional planned schedule duration. */
+  duration?: string;
 }
 
 /** Internal representation of direct scheduling data owned by one IfcTask. */
@@ -159,6 +201,16 @@ export interface IfcRelAssignsToProductRecord
   relatingProduct: IfcExternalObjectReference;
 }
 
+/** Internal representation of a schedule controlling a mission parent task. */
+export interface IfcRelAssignsToControlRecord
+  extends IfcRecordBase<"IfcRelAssignsToControl"> {
+  /** Mission parent task controlled by the work schedule. */
+  relatedObjects: IfcRecordReference<"IfcTask">[];
+
+  /** Generated work schedule for the mission plan. */
+  relatingControl: IfcRecordReference<"IfcWorkSchedule">;
+}
+
 /** Internal representation of a task-to-property-set relationship. */
 export interface IfcRelDefinesByPropertiesRecord
   extends IfcRecordBase<"IfcRelDefinesByProperties"> {
@@ -172,7 +224,7 @@ export interface IfcRelDefinesByPropertiesRecord
 /** Internal representation of a custom task property set. */
 export interface IfcPropertySetRecord extends IfcRecordBase<"IfcPropertySet"> {
   /** Custom property-set name without the reserved Pset_ prefix. */
-  name: "RobotAction" | "RobotMission";
+  name: "RobotAction" | "RobotTask" | "RobotMission";
 
   /** Property records contained in this set. */
   hasProperties: Array<
@@ -207,10 +259,12 @@ export interface IfcPropertyListValueRecord
 export type IfcRobotTaskRecord =
   | IfcTaskRecord
   | IfcTaskTimeRecord
+  | IfcWorkScheduleRecord
   | IfcRelNestsRecord
   | IfcRelSequenceRecord
   | IfcRelAssignsToProcessRecord
   | IfcRelAssignsToProductRecord
+  | IfcRelAssignsToControlRecord
   | IfcRelDefinesByPropertiesRecord
   | IfcPropertySetRecord
   | IfcPropertySingleValueRecord

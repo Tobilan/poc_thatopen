@@ -144,7 +144,19 @@ const createMappedMission = (): RobotMission => {
     timestamp,
   );
   let mission = createRobotMission(
-    { id: "mission-1", name: "Door mission" },
+    {
+      id: "mission-1",
+      name: "Door mission",
+      status: "planned",
+      priority: "high",
+      schedule: {
+        id: "schedule-1",
+        name: "Door mission schedule",
+        scheduleStart: "2026-01-01T08:00:00Z",
+        scheduleFinish: "2026-01-01T08:30:00Z",
+        scheduleDuration: "PT30M",
+      },
+    },
     timestamp,
   );
   mission = addTaskToMission(mission, openTask, timestamp);
@@ -232,6 +244,10 @@ test("mission hierarchy, task time, and execution sequence map to IFC-like recor
     (record) => record.role === "MISSION",
   );
   assert.ok(rootTask);
+  assert.equal(rootTask.identification, "mission-1");
+  assert.equal(rootTask.objectType, "RobotMission");
+  assert.equal(rootTask.status, "planned");
+  assert.equal(rootTask.priority, 3);
 
   const nests = recordsOf(graph, "IfcRelNests");
   assert.equal(nests.length, 1);
@@ -265,6 +281,37 @@ test("mission hierarchy, task time, and execution sequence map to IFC-like recor
   assert.ok(time);
   assert.equal(time.scheduleDuration, "PT30S");
   assert.equal(time.completion, 0);
+
+  const schedules = recordsOf(graph, "IfcWorkSchedule");
+  assert.equal(schedules.length, 1);
+  assert.equal(schedules[0].sourceId, "schedule-1");
+  assert.equal(schedules[0].startTime, "2026-01-01T08:00:00Z");
+  assert.equal(schedules[0].duration, "PT30M");
+  const controls = recordsOf(graph, "IfcRelAssignsToControl");
+  assert.equal(controls.length, 1);
+  assert.deepEqual(controls[0].relatedObjects, [graph.rootTask]);
+  assert.equal(controls[0].relatingControl.id, schedules[0].id);
+});
+
+/** Verifies application and viewer metadata remains task-owned during mapping. */
+test("mission and task metadata map to custom task-owned property sets", () => {
+  const graph = mapMissionToIfcRecords(createMappedMission());
+  const names = recordsOf(graph, "IfcPropertySet").map(
+    (propertySet) => propertySet.name,
+  );
+
+  assert.ok(names.includes("RobotMission"));
+  assert.ok(names.includes("RobotTask"));
+  const metadataNames = new Set(
+    recordsOf(graph, "IfcPropertySingleValue").map((record) => record.name),
+  );
+  assert.ok(metadataNames.has("CreatedAt"));
+  assert.ok(metadataNames.has("UpdatedAt"));
+  assert.ok(
+    recordsOf(graph, "IfcRelDefinesByProperties").every((relation) =>
+      relation.relatedObjects.every((object) => object.entity === "IfcTask"),
+    ),
+  );
 });
 
 /** Verifies reserved property names and forbidden object-level action attachment. */

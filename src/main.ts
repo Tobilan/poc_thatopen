@@ -14,6 +14,11 @@ import {
 } from "./viewer/robot-tasks";
 import { RobotMissionService } from "./application/robot-tasks";
 import { SelectableRobotMissionRepository } from "./persistence/robot-tasks";
+import {
+  IfcModelExportService,
+  IfcSourceModelRegistry,
+  WebIfcStructuralCodec,
+} from "./ifc/model-export";
 
 BUI.Manager.init();
 
@@ -111,7 +116,27 @@ world.camera.projection.onChanged.add(() => {
 const ifcLoader = components.get(OBC.IfcLoader);
 await ifcLoader.setup({
   autoSetWasm: false,
-  wasm: { absolute: true, path: "https://unpkg.com/web-ifc@0.0.71/" },
+  // The WASM runtime must match the exact web-ifc version in package-lock.json.
+  wasm: { absolute: true, path: "https://unpkg.com/web-ifc@0.0.72/" },
+});
+
+// Direct IFC imports retain their source bytes so exports can be rewritten and
+// reparsed structurally. Arbitrary .frag models are intentionally unsupported.
+const ifcSourceRegistry = new IfcSourceModelRegistry();
+const ifcExportService = new IfcModelExportService(
+  ifcSourceRegistry,
+  new WebIfcStructuralCodec({
+    wasmPath: ifcLoader.settings.wasm.path,
+    wasmAbsolute: ifcLoader.settings.wasm.absolute,
+    customLocateFileHandler:
+      ifcLoader.settings.customLocateFileHandler ?? undefined,
+  }),
+);
+
+// Once Fragments editor actions diverge from the retained IFC source, export is
+// rejected until the model is reloaded; clearing edit history cannot hide this.
+fragments.core.editor.onEdit.add(({ modelId }) => {
+  ifcSourceRegistry.markStructurallyChanged(modelId);
 });
 
 const highlighter = components.get(OBF.Highlighter);
@@ -280,6 +305,7 @@ fragments.list.onItemSet.add(async ({ value: model }) => {
 
 fragments.list.onItemDeleted.add((modelId) => {
   modelProvenance.unregisterModel(modelId);
+  ifcSourceRegistry.unregister(modelId);
   selectionMetadata.clearCache(modelId);
   selectionManager.invalidateCandidateSession();
 });
@@ -317,6 +343,8 @@ const [contentGrid] = BUI.Component.create<
   viewportTemplate: viewportCardTemplate,
   selectionManager,
   modelProvenance,
+  ifcSourceRegistry,
+  ifcExportService,
   missionService: robotMissionService,
   missionStorageSelection: robotMissionRepository,
 });

@@ -14,6 +14,10 @@ import type {
   RobotMissionService,
   RobotMissionStorageSelection,
 } from "../../application/robot-tasks";
+import type {
+  IfcModelExportService,
+  IfcSourceModelRegistry,
+} from "../../ifc/model-export";
 
 type Viewer = "viewer";
 
@@ -51,6 +55,8 @@ export interface ContentGridState {
   viewportTemplate: BUI.StatelessComponent;
   selectionManager: ViewerObjectSelectionManager;
   modelProvenance: DirectIfcModelProvenance;
+  ifcSourceRegistry: IfcSourceModelRegistry;
+  ifcExportService: IfcModelExportService;
   missionService: RobotMissionService;
   missionStorageSelection: RobotMissionStorageSelection;
 }
@@ -63,6 +69,8 @@ export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
     world,
     selectionManager,
     modelProvenance,
+    ifcSourceRegistry,
+    ifcExportService,
     missionService,
     missionStorageSelection,
   } = state;
@@ -74,7 +82,13 @@ export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
     grid.elements = {
       models: {
         template: TEMPLATES.modelsPanelTemplate,
-        initialState: { components, modelProvenance },
+        initialState: {
+          components,
+          modelProvenance,
+          ifcSourceRegistry,
+          ifcExportService,
+          missionService,
+        },
       },
       elementData: {
         template: TEMPLATES.elementsDataPanelTemplate,

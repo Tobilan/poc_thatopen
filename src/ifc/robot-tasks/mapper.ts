@@ -5,6 +5,7 @@ import type {
   RobotMission,
   RobotObjectReference,
   RobotTask,
+  RobotTaskPriority,
 } from "../../domain/robot-tasks";
 import type {
   IfcExternalObjectReference,
@@ -40,6 +41,14 @@ export class IfcRobotTaskMappingError extends Error {
 const recordId = (...segments: Array<string | number>) =>
   segments.map((segment) => encodeURIComponent(String(segment))).join("/");
 
+/** Maps the domain priority scale to IfcTask.Priority. */
+const ifcPriority = (
+  priority: RobotTaskPriority | undefined,
+): number | undefined => {
+  if (priority === undefined) return undefined;
+  return { low: 1, medium: 2, high: 3, critical: 4 }[priority];
+};
+
 /** Creates a typed pointer to one generated record. */
 const reference = <Entity extends IfcRobotTaskRecord["entity"]>(
   entity: Entity,
@@ -71,12 +80,13 @@ const targetAssignmentName = (
 const addSingleValue = (
   records: IfcRobotTaskRecord[],
   propertyReferences: IfcPropertySetRecord["hasProperties"],
-  taskId: string,
+  propertySetName: IfcPropertySetRecord["name"],
+  ownerId: string,
   name: string,
   value: IfcPropertyScalar | undefined,
 ) => {
   if (value === undefined) return;
-  const id = recordId("property", "RobotAction", taskId, name);
+  const id = recordId("property", propertySetName, ownerId, name);
   const property: IfcPropertySingleValueRecord = {
     entity: "IfcPropertySingleValue",
     id,
@@ -91,12 +101,13 @@ const addSingleValue = (
 const addListValue = (
   records: IfcRobotTaskRecord[],
   propertyReferences: IfcPropertySetRecord["hasProperties"],
-  taskId: string,
+  propertySetName: IfcPropertySetRecord["name"],
+  ownerId: string,
   name: string,
   values: readonly IfcPropertyScalar[] | undefined,
 ) => {
   if (values === undefined) return;
-  const id = recordId("property-list", "RobotAction", taskId, name);
+  const id = recordId("property-list", propertySetName, ownerId, name);
   const property: IfcPropertyListValueRecord = {
     entity: "IfcPropertyListValue",
     id,
@@ -126,6 +137,7 @@ const mapRobotActionProperties = (
   addSingleValue(
     records,
     propertyReferences,
+    "RobotAction",
     task.id,
     "ActionType",
     task.actionType,
@@ -133,6 +145,7 @@ const mapRobotActionProperties = (
   addSingleValue(
     records,
     propertyReferences,
+    "RobotAction",
     task.id,
     "TargetState",
     properties.targetState,
@@ -140,6 +153,7 @@ const mapRobotActionProperties = (
   addSingleValue(
     records,
     propertyReferences,
+    "RobotAction",
     task.id,
     "TargetObjectRole",
     properties.targetObjectRole,
@@ -147,6 +161,7 @@ const mapRobotActionProperties = (
   addSingleValue(
     records,
     propertyReferences,
+    "RobotAction",
     task.id,
     "AffectedObjectRole",
     properties.affectedObjectRole,
@@ -154,6 +169,7 @@ const mapRobotActionProperties = (
   addSingleValue(
     records,
     propertyReferences,
+    "RobotAction",
     task.id,
     "RequiredCapability",
     properties.requiredCapability,
@@ -161,6 +177,7 @@ const mapRobotActionProperties = (
   addListValue(
     records,
     propertyReferences,
+    "RobotAction",
     task.id,
     "Preconditions",
     properties.preconditions,
@@ -168,6 +185,7 @@ const mapRobotActionProperties = (
   addListValue(
     records,
     propertyReferences,
+    "RobotAction",
     task.id,
     "Postconditions",
     properties.postconditions,
@@ -175,6 +193,7 @@ const mapRobotActionProperties = (
   addSingleValue(
     records,
     propertyReferences,
+    "RobotAction",
     task.id,
     "SuccessCondition",
     properties.successCondition,
@@ -195,6 +214,105 @@ const mapRobotActionProperties = (
     relatingPropertyDefinition: reference(propertySet.entity, propertySet.id),
   };
   records.push(relation);
+};
+
+/** Maps application timestamps and optional viewer annotation data to a task. */
+const mapTaskMetadata = (
+  task: RobotTask,
+  taskReference: IfcRecordReference<"IfcTask">,
+  records: IfcRobotTaskRecord[],
+) => {
+  const propertyReferences: IfcPropertySetRecord["hasProperties"] = [];
+  addSingleValue(
+    records,
+    propertyReferences,
+    "RobotTask",
+    task.id,
+    "CreatedAt",
+    task.createdAt,
+  );
+  addSingleValue(
+    records,
+    propertyReferences,
+    "RobotTask",
+    task.id,
+    "UpdatedAt",
+    task.updatedAt,
+  );
+  addListValue(
+    records,
+    propertyReferences,
+    "RobotTask",
+    task.id,
+    "CameraPosition",
+    task.viewpoint?.cameraPosition,
+  );
+  addListValue(
+    records,
+    propertyReferences,
+    "RobotTask",
+    task.id,
+    "CameraTarget",
+    task.viewpoint?.cameraTarget,
+  );
+  addListValue(
+    records,
+    propertyReferences,
+    "RobotTask",
+    task.id,
+    "MarkerPosition",
+    task.markerPosition,
+  );
+
+  const propertySet: IfcPropertySetRecord = {
+    entity: "IfcPropertySet",
+    id: recordId("property-set", "RobotTask", task.id),
+    name: "RobotTask",
+    hasProperties: propertyReferences,
+  };
+  records.push(propertySet, {
+    entity: "IfcRelDefinesByProperties",
+    id: recordId("relation", "RobotTask", task.id),
+    relatedObjects: [taskReference],
+    relatingPropertyDefinition: reference(propertySet.entity, propertySet.id),
+  });
+};
+
+/** Maps mission audit timestamps to a parent-task-owned custom property set. */
+const mapMissionMetadata = (
+  mission: RobotMission,
+  missionReference: IfcRecordReference<"IfcTask">,
+  records: IfcRobotTaskRecord[],
+) => {
+  const propertyReferences: IfcPropertySetRecord["hasProperties"] = [];
+  addSingleValue(
+    records,
+    propertyReferences,
+    "RobotMission",
+    mission.id,
+    "CreatedAt",
+    mission.createdAt,
+  );
+  addSingleValue(
+    records,
+    propertyReferences,
+    "RobotMission",
+    mission.id,
+    "UpdatedAt",
+    mission.updatedAt,
+  );
+  const propertySet: IfcPropertySetRecord = {
+    entity: "IfcPropertySet",
+    id: recordId("property-set", "RobotMission", mission.id),
+    name: "RobotMission",
+    hasProperties: propertyReferences,
+  };
+  records.push(propertySet, {
+    entity: "IfcRelDefinesByProperties",
+    id: recordId("relation", "RobotMission", mission.id),
+    relatedObjects: [missionReference],
+    relatingPropertyDefinition: reference(propertySet.entity, propertySet.id),
+  });
 };
 
 /** Maps direct targets, affected objects, and MOVE references to IFC relations. */
@@ -258,6 +376,10 @@ const mapTask = (
     role: "EXECUTABLE_TASK",
     name: task.name,
     description: task.description,
+    identification: task.id,
+    objectType: "RobotTask",
+    status: task.status,
+    priority: ifcPriority(task.priority),
     taskTime: taskTimeId ? reference("IfcTaskTime", taskTimeId) : undefined,
   };
   records.push(taskRecord);
@@ -275,6 +397,7 @@ const mapTask = (
   const taskReference = reference(taskRecord.entity, taskRecord.id);
   mapObjectAssignments(task, taskReference, records);
   mapRobotActionProperties(task, taskReference, records);
+  mapTaskMetadata(task, taskReference, records);
   return taskRecord;
 };
 
@@ -310,18 +433,46 @@ export const mapMissionToIfcRecords = (
     role: "MISSION",
     name: mission.name,
     description: mission.description,
+    identification: mission.id,
+    objectType: "RobotMission",
+    status: mission.status,
+    priority: ifcPriority(mission.priority),
   };
   records.push(missionTask);
+  const missionReference = reference(missionTask.entity, missionTask.id);
+  mapMissionMetadata(mission, missionReference, records);
 
   const taskRecords = mission.tasks.map((task) => mapTask(task, records));
   records.push({
     entity: "IfcRelNests",
     id: recordId("relation", "nests", mission.id),
-    relatingObject: reference(missionTask.entity, missionTask.id),
+    relatingObject: missionReference,
     relatedObjects: taskRecords.map((taskRecord) =>
       reference(taskRecord.entity, taskRecord.id),
     ),
   });
+
+  const scheduleId = mission.schedule?.id ?? recordId("schedule", mission.id);
+  const workScheduleId = recordId("work-schedule", scheduleId);
+  records.push(
+    {
+      entity: "IfcWorkSchedule",
+      id: workScheduleId,
+      sourceId: scheduleId,
+      name: mission.schedule?.name ?? `${mission.name} Schedule`,
+      identification: scheduleId,
+      creationDate: mission.createdAt,
+      startTime: mission.schedule?.scheduleStart ?? mission.createdAt,
+      finishTime: mission.schedule?.scheduleFinish,
+      duration: mission.schedule?.scheduleDuration,
+    },
+    {
+      entity: "IfcRelAssignsToControl",
+      id: recordId("relation", "schedule", mission.id),
+      relatedObjects: [missionReference],
+      relatingControl: reference("IfcWorkSchedule", workScheduleId),
+    },
+  );
 
   const taskRecordBySourceId = new Map(
     taskRecords.map((taskRecord) => [taskRecord.sourceId, taskRecord]),
@@ -340,7 +491,7 @@ export const mapMissionToIfcRecords = (
 
   return {
     missionId: mission.id,
-    rootTask: reference(missionTask.entity, missionTask.id),
+    rootTask: missionReference,
     records,
   };
 };

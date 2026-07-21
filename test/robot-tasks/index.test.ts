@@ -7,6 +7,9 @@
  */
 import "./robot-mission-domain.test";
 import "./ifc-relation-mapper.test";
+import "./ifc-model-export.test";
+import "./ifc-mission-writer.test";
+import "./ifc-mission-export.integration.test";
 import "./robot-mission-persistence.test";
 import "./robot-mission-service.test";
 import "./selectable-mission-repository.test";
