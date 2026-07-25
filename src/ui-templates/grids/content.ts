@@ -1,12 +1,23 @@
 import * as OBC from "@thatopen/components";
 import * as BUI from "@thatopen/ui";
 import * as TEMPLATES from "..";
-import { TaskService } from "../../tasks/taskService";
 import {
   CONTENT_GRID_GAP,
   CONTENT_GRID_ID,
   SMALL_COLUMN_WIDTH,
 } from "../../globals";
+import type {
+  DirectIfcModelProvenance,
+  ViewerObjectSelectionManager,
+} from "../../viewer/robot-tasks";
+import type {
+  RobotMissionService,
+  RobotMissionStorageSelection,
+} from "../../application/robot-tasks";
+import type {
+  IfcModelExportService,
+  IfcSourceModelRegistry,
+} from "../../ifc/model-export";
 
 type Viewer = "viewer";
 
@@ -22,23 +33,47 @@ type ElementData = {
 
 type Viewpoints = { name: "viewpoints"; state: TEMPLATES.ViewpointsPanelState };
 
-type Tasks = { name: "tasks"; state: TEMPLATES.TasksPanelState };
+type RobotMissionTasks = {
+  name: "robotMissionTasks";
+  state: TEMPLATES.RobotMissionTasksPanelState;
+};
 
-export type ContentGridElements = [Viewer, Models, ElementData, Viewpoints, Tasks];
+export type ContentGridElements = [
+  Viewer,
+  Models,
+  ElementData,
+  Viewpoints,
+  RobotMissionTasks,
+];
 
 export type ContentGridLayouts = ["Viewer"];
 
 export interface ContentGridState {
   components: OBC.Components;
+  world: OBC.World;
   id: string;
   viewportTemplate: BUI.StatelessComponent;
-  tasks: TaskService;
+  selectionManager: ViewerObjectSelectionManager;
+  modelProvenance: DirectIfcModelProvenance;
+  ifcSourceRegistry: IfcSourceModelRegistry;
+  ifcExportService: IfcModelExportService;
+  missionService: RobotMissionService;
+  missionStorageSelection: RobotMissionStorageSelection;
 }
 
 export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
   state,
 ) => {
-  const { components, tasks } = state;
+  const {
+    components,
+    world,
+    selectionManager,
+    modelProvenance,
+    ifcSourceRegistry,
+    ifcExportService,
+    missionService,
+    missionStorageSelection,
+  } = state;
 
   const onCreated = (e?: Element) => {
     if (!e) return;
@@ -47,19 +82,29 @@ export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
     grid.elements = {
       models: {
         template: TEMPLATES.modelsPanelTemplate,
-        initialState: { components, tasks },
+        initialState: {
+          components,
+          modelProvenance,
+          ifcSourceRegistry,
+          ifcExportService,
+          missionService,
+        },
       },
       elementData: {
         template: TEMPLATES.elementsDataPanelTemplate,
-        initialState: { components },
+        initialState: { components, selectionManager },
+      },
+      robotMissionTasks: {
+        template: TEMPLATES.robotMissionTasksPanelTemplate,
+        initialState: {
+          missionService,
+          missionStorageSelection,
+          selectionManager,
+        },
       },
       viewpoints: {
         template: TEMPLATES.viewpointsPanelTemplate,
-        initialState: { components },
-      },
-      tasks: {
-        template: TEMPLATES.tasksPanelTemplate,
-        initialState: { service: tasks },
+        initialState: { components, world, selectionManager },
       },
       viewer: state.viewportTemplate,
     };
@@ -68,8 +113,8 @@ export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
       Viewer: {
         template: `
           "models viewer elementData" 1fr
+          "robotMissionTasks viewer elementData" 2fr
           "viewpoints viewer elementData" 1fr
-          "tasks viewer elementData" 1fr
           /${SMALL_COLUMN_WIDTH} 1fr ${SMALL_COLUMN_WIDTH}
         `,
       },

@@ -4,10 +4,15 @@ import * as OBF from "@thatopen/components-front";
 import * as FRAGS from "@thatopen/fragments";
 import * as THREE from "three";
 import { appIcons, tooltips } from "../../globals";
+import {
+  ROBOT_SELECTION_TRANSIENT_STYLES,
+  type ViewerObjectSelectionManager,
+} from "../../viewer/robot-tasks";
 
 export interface ViewerToolbarState {
   components: OBC.Components;
   world: OBC.World;
+  selectionManager: ViewerObjectSelectionManager;
 }
 
 const originalColors = new Map<
@@ -65,7 +70,7 @@ const restoreModelMaterials = () => {
 export const viewerToolbarTemplate: BUI.StatefullComponent<
   ViewerToolbarState
 > = (state) => {
-  const { components, world } = state;
+  const { components, world, selectionManager } = state;
 
   const highlighter = components.get(OBF.Highlighter);
   const hider = components.get(OBC.Hider);
@@ -98,6 +103,7 @@ export const viewerToolbarTemplate: BUI.StatefullComponent<
     if (OBC.ModelIdMapUtils.isEmpty(selection)) return;
     target.loading = true;
     await hider.set(false, selection);
+    selectionManager.invalidateCandidateSession();
     target.loading = false;
   };
 
@@ -106,12 +112,14 @@ export const viewerToolbarTemplate: BUI.StatefullComponent<
     if (OBC.ModelIdMapUtils.isEmpty(selection)) return;
     target.loading = true;
     await hider.isolate(selection);
+    selectionManager.invalidateCandidateSession();
     target.loading = false;
   };
 
   const onShowAll = async ({ target }: { target: BUI.Button }) => {
     target.loading = true;
     await hider.set(true);
+    selectionManager.invalidateCandidateSession();
     target.loading = false;
   };
 
@@ -129,10 +137,13 @@ export const viewerToolbarTemplate: BUI.StatefullComponent<
     const selection = highlighter.selection.select;
     if (OBC.ModelIdMapUtils.isEmpty(selection) || !colorValue) return;
     const color = new THREE.Color(colorValue);
-    const style = [...highlighter.styles.entries()].find(([, definition]) => {
-      if (!definition) return false;
-      return definition.color.getHex() === color.getHex();
-    });
+    const style = [...highlighter.styles.entries()].find(
+      ([name, definition]) => {
+        if (ROBOT_SELECTION_TRANSIENT_STYLES.has(name)) return false;
+        if (!definition) return false;
+        return definition.color.getHex() === color.getHex();
+      },
+    );
     target.loading = true;
     if (style) {
       const name = style[0];
@@ -150,7 +161,7 @@ export const viewerToolbarTemplate: BUI.StatefullComponent<
       });
       await highlighter.highlightByID(colorValue, selection, false, false);
     }
-    await highlighter.clear("select");
+    await selectionManager.clearSelection();
     target.loading = false;
   };
 
