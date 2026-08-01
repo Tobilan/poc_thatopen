@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 import { IFCROOT, type IfcLineObject } from "web-ifc";
-import { compareRobotMissionsSemantically } from "../../src/application/robot-tasks";
+import {
+  compareRobotMissionsSemantically,
+  RobotMissionService,
+  type RobotMissionStorageSelection,
+} from "../../src/application/robot-tasks";
 import type {
   RobotActionType,
   RobotMission,
@@ -17,10 +21,14 @@ import {
   type IfcMissionImportResult,
 } from "../../src/ifc/model-import";
 import {
+  IfcModelExportService,
+  IfcSourceModelRegistry,
   WebIfcStructuralCodec,
   type IfcApiPort,
 } from "../../src/ifc/model-export";
+import { IfcMissionRoundtripCoordinator } from "../../src/ifc/model-roundtrip";
 import { mapMissionToIfcRecords } from "../../src/ifc/robot-tasks";
+import { InMemoryRobotMissionRepository } from "../../src/persistence/robot-tasks";
 
 type SupportedSchema = "IFC4" | "IFC4X3" | "IFC4X3_ADD1" | "IFC4X3_ADD2";
 
@@ -480,6 +488,139 @@ test("real IFC4 replacement applies edits, preserves identities, and removes obs
   for (const [identity, secondEntry] of secondByIdentity) {
     if (!secondEntry.globalId) continue;
     assert.equal(thirdByIdentity.get(identity)?.globalId, secondEntry.globalId);
+  }
+});
+
+test("real UI orchestration survives two load-edit-export-reload cycles without identity drift", async () => {
+  const initial = initialMissions();
+  const annotated = await replace(sourceIfc("IFC4"), initial);
+  const storageSelection: RobotMissionStorageSelection = {
+    getMode: () => "none",
+    selectMode: () => {},
+    isAvailable: () => true,
+  };
+
+  const createRoundtrip = (bytes: Uint8Array) => {
+    const repository = new InMemoryRobotMissionRepository();
+    const sources = new IfcSourceModelRegistry();
+    sources.register({
+      modelId: sourceModelId,
+      fileName: "acceptance.ifc",
+      bytes,
+    });
+    const importer = new IfcMissionImportService({
+      wasmPath,
+      wasmAbsolute: true,
+      createApi: () => new NodeIfcAPI() as unknown as IfcMissionImportApiPort,
+    });
+    const coordinator = new IfcMissionRoundtripCoordinator({
+      repository,
+      storageSelection,
+      importer,
+      exporter: new IfcModelExportService(sources, codec()),
+      sources,
+    });
+    return { coordinator, repository };
+  };
+
+  const firstPage = createRoundtrip(annotated.bytes);
+  const loaded = await firstPage.coordinator.importLoadedModel(
+    sourceModelId,
+    "acceptance.ifc",
+    annotated.bytes,
+  );
+  assert.equal(loaded.importedCount, 2);
+  const service = new RobotMissionService(firstPage.repository, {
+    now: () => updatedTimestamp,
+  });
+  service.addTask("mission-retained", {
+    id: "task-command-added",
+    name: "Command-added navigation",
+    actionType: "NAVIGATE_TO",
+    targetObjects: [
+      {
+        globalId: targetGlobalId,
+        modelId: sourceModelId,
+        expressId: 2,
+        ifcClass: "IFCBUILDINGELEMENTPROXY",
+      },
+    ],
+  });
+  service.updateTask("mission-retained", "task-retained", {
+    name: "Command-edited pass",
+    actionType: "PASS_THROUGH",
+    targetObjects: [],
+    affectedObjects: [
+      {
+        globalId: targetGlobalId,
+        modelId: sourceModelId,
+        expressId: 2,
+        ifcClass: "IFCBUILDINGELEMENTPROXY",
+      },
+    ],
+  });
+  service.deleteTask("mission-retained", "task-deleted");
+  service.setTaskExecutionOrder("mission-retained", [
+    "task-command-added",
+    "task-retained",
+  ]);
+  const edited = service.listMissions();
+
+  const firstCycle = await firstPage.coordinator.exportModel(
+    sourceModelId,
+    false,
+  );
+  assert.deepEqual(
+    {
+      added: firstCycle.addedCount,
+      updated: firstCycle.updatedCount,
+      removed: firstCycle.removedCount,
+    },
+    { added: 0, updated: 1, removed: 0 },
+  );
+
+  const reloadedPage = createRoundtrip(firstCycle.bytes);
+  await reloadedPage.coordinator.importLoadedModel(
+    sourceModelId,
+    "acceptance.ifc",
+    firstCycle.bytes,
+  );
+  assert.equal(
+    compareRobotMissionsSemantically(edited, reloadedPage.repository.list())
+      .equal,
+    true,
+  );
+  const firstReload = await importMissions(firstCycle.bytes);
+
+  const secondCycle = await reloadedPage.coordinator.exportModel(
+    sourceModelId,
+    false,
+  );
+  assert.deepEqual(
+    {
+      added: secondCycle.addedCount,
+      updated: secondCycle.updatedCount,
+      removed: secondCycle.removedCount,
+    },
+    { added: 0, updated: 0, removed: 0 },
+  );
+  const secondReload = await importMissions(secondCycle.bytes);
+  assert.equal(
+    compareRobotMissionsSemantically(edited, secondReload.missions).equal,
+    true,
+  );
+  assert.deepEqual(
+    ownedEntityCounts(secondReload),
+    ownedEntityCounts(firstReload),
+  );
+  const firstIdentities = provenanceByIdentity(firstReload);
+  for (const [identity, entity] of provenanceByIdentity(secondReload)) {
+    if (!entity.globalId) continue;
+    assert.equal(
+      entity.globalId,
+      firstIdentities.get(identity)?.globalId,
+      identity,
+    );
   }
 });
 

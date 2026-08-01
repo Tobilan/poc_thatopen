@@ -2,19 +2,27 @@ import * as BUI from "@thatopen/ui";
 import * as CUI from "@thatopen/ui-obc";
 import * as OBC from "@thatopen/components";
 import { appIcons } from "../../globals";
-import type { RobotMissionService } from "../../application/robot-tasks";
-import type {
-  IfcModelExportService,
-  IfcSourceModelRegistry,
-} from "../../ifc/model-export";
+import type { IfcSourceModelRegistry } from "../../ifc/model-export";
+import {
+  importLoadedModelMissions,
+  type IfcMissionRoundtripCoordinator,
+  type IfcMissionRoundtripError,
+} from "../../ifc/model-roundtrip";
 import type { DirectIfcModelProvenance } from "../../viewer/robot-tasks";
+import type { RobotMissionPanelRefresh } from "./robotMissionPanelRefresh";
 
 export interface ModelsPanelState {
   components: OBC.Components;
   modelProvenance: DirectIfcModelProvenance;
   ifcSourceRegistry: IfcSourceModelRegistry;
-  ifcExportService: IfcModelExportService;
-  missionService: RobotMissionService;
+  ifcMissionRoundtrip: IfcMissionRoundtripCoordinator;
+  missionPanelRefresh: RobotMissionPanelRefresh;
+}
+
+interface IfcRoundtripNotice {
+  severity: "info" | "warning" | "error";
+  summary: string;
+  details?: readonly string[];
 }
 
 /** Mutable presentation state for the model export controls. */
@@ -25,17 +33,14 @@ interface IfcExportControlsState {
   /** Registry identifying models backed by retained IFC source bytes. */
   ifcSourceRegistry: IfcSourceModelRegistry;
 
-  /** Service producing structurally validated IFC STEP output. */
-  ifcExportService: IfcModelExportService;
-
-  /** Application service providing the current internal mission aggregates. */
-  missionService: RobotMissionService;
+  /** Source-scoped importer/exporter orchestration. */
+  ifcMissionRoundtrip: IfcMissionRoundtripCoordinator;
 
   /** Runtime identifier of the model selected for export. */
   selectedModelId?: string;
 
   /** Result or rejection message from the most recent export attempt. */
-  notice?: string;
+  notice?: IfcRoundtripNotice;
 
   /** Requests a focused rerender of only the IFC export controls. */
   refresh: (
@@ -62,6 +67,41 @@ const downloadIfc = (fileName: string, bytes: Uint8Array) => {
   anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 0);
 };
+
+/** Presents typed orchestration failures without losing structured details. */
+const errorNotice = (error: unknown): IfcRoundtripNotice => {
+  const typed = error as Partial<IfcMissionRoundtripError> & {
+    issues?: ReadonlyArray<{ code: string; message: string }>;
+  };
+  const details = Array.isArray(typed.details)
+    ? typed.details
+    : typed.issues?.map((issue) => `${issue.code}: ${issue.message}`);
+  return {
+    severity: "error",
+    summary: error instanceof Error ? error.message : String(error),
+    details,
+  };
+};
+
+/** Renders a concise status with optional expandable diagnostics. */
+const noticeTemplate = (notice?: IfcRoundtripNotice) =>
+  notice
+    ? BUI.html`
+        <div class="ifc-export-notice ${notice.severity}">
+          <p>${notice.summary}</p>
+          ${
+            notice.details?.length
+              ? BUI.html`
+                  <details>
+                    <summary>${notice.details.length} diagnostic${notice.details.length === 1 ? "" : "s"}</summary>
+                    <ul>${notice.details.map((detail) => BUI.html`<li>${detail}</li>`)}</ul>
+                  </details>
+                `
+              : null
+          }
+        </div>
+      `
+    : null;
 
 /** Renders model selection and the safe IFC export command. */
 const ifcExportControlsTemplate: BUI.StatefullComponent<
@@ -98,19 +138,22 @@ const ifcExportControlsTemplate: BUI.StatefullComponent<
     );
     target.loading = true;
     try {
-      const result = await state.ifcExportService.exportModel(selectedModelId, {
+      const result = await state.ifcMissionRoundtrip.exportModel(
+        selectedModelId,
         hasStructuralChanges,
-        missions: state.missionService.listMissions(),
-      });
+      );
       downloadIfc(result.fileName, result.bytes);
       state.refresh({
         selectedModelId,
-        notice: `${result.fileName} exported as structurally validated ${result.schema} with ${result.missionCount} robot mission${result.missionCount === 1 ? "" : "s"}.`,
+        notice: {
+          severity: result.warningCount ? "warning" : "info",
+          summary: `${result.fileName}: ${result.addedCount} added, ${result.updatedCount} updated, ${result.removedCount} removed; ${result.warningCount} warning${result.warningCount === 1 ? "" : "s"}; schema ${result.schema}.`,
+        },
       });
     } catch (error) {
       state.refresh({
         selectedModelId,
-        notice: error instanceof Error ? error.message : String(error),
+        notice: errorNotice(error),
       });
     } finally {
       target.loading = false;
@@ -138,9 +181,9 @@ const ifcExportControlsTemplate: BUI.StatefullComponent<
         @click=${onExportIfc}
       ></bim-button>
       <p class="ifc-export-description">
-        Direct IFC imports are exported with all current robot missions and independently parsed again before download. Pure .frag models and structural Fragments edits are not exported. Invalid missions or references outside the selected IFC stop the export.
+        The selected direct IFC is exported only with missions associated with that source (plus unassigned missions whose references belong to it), then independently imported again before download. Pure .frag models, malformed annotations, cross-model references, and structural Fragments edits stop export.
       </p>
-      ${state.notice ? BUI.html`<p class="ifc-export-notice">${state.notice}</p>` : null}
+      ${noticeTemplate(state.notice)}
     </div>
   `;
 };
@@ -152,8 +195,8 @@ export const modelsPanelTemplate: BUI.StatefullComponent<ModelsPanelState> = (
     components,
     modelProvenance,
     ifcSourceRegistry,
-    ifcExportService,
-    missionService,
+    ifcMissionRoundtrip,
+    missionPanelRefresh,
   } = state;
 
   const ifcLoader = components.get(OBC.IfcLoader);
@@ -176,8 +219,7 @@ export const modelsPanelTemplate: BUI.StatefullComponent<ModelsPanelState> = (
   >(ifcExportControlsTemplate, {
     components,
     ifcSourceRegistry,
-    ifcExportService,
-    missionService,
+    ifcMissionRoundtrip,
     refresh: refreshExportControls,
   });
   updateExportControls = exportControlsUpdater;
@@ -207,9 +249,11 @@ export const modelsPanelTemplate: BUI.StatefullComponent<ModelsPanelState> = (
         const buffer = await file.arrayBuffer();
         const bytes = new Uint8Array(buffer);
         const modelId = await getModelId(file.name, bytes);
+        let loadedModelId = modelId;
         modelProvenance.registerDirectIfcModel(modelId);
         try {
           const model = await ifcLoader.load(bytes, true, modelId);
+          loadedModelId = model.modelId;
           if (model.modelId !== modelId) {
             modelProvenance.unregisterModel(modelId);
           }
@@ -219,16 +263,52 @@ export const modelsPanelTemplate: BUI.StatefullComponent<ModelsPanelState> = (
             fileName: file.name,
             bytes,
           });
-          refreshExportControls({
-            selectedModelId: model.modelId,
-            notice: "IFC source retained for structurally validated export.",
-          });
         } catch (error) {
           modelProvenance.unregisterModel(modelId);
           ifcSourceRegistry.unregister(modelId);
           throw error;
         }
+        try {
+          const imported = await importLoadedModelMissions(
+            ifcMissionRoundtrip,
+            "direct-ifc",
+            loadedModelId,
+            file.name,
+            bytes,
+          );
+          if (!imported) {
+            throw new Error(
+              "Direct IFC mission import was unexpectedly skipped.",
+            );
+          }
+          const issueDetails = imported.issues.map(
+            (issue) => `${issue.code}: ${issue.message}`,
+          );
+          let severity: IfcRoundtripNotice["severity"] = "info";
+          if (imported.warningCount) severity = "warning";
+          if (imported.errorCount) severity = "error";
+          refreshExportControls({
+            selectedModelId: loadedModelId,
+            notice: {
+              severity,
+              summary: imported.errorCount
+                ? `${file.name} loaded with partial mission success: ${imported.importedCount} imported, ${imported.replacedCount} replaced, ${imported.warningCount} warnings, ${imported.errorCount} malformed mission errors. Mission export is disabled for this source.`
+                : `${file.name} loaded: ${imported.importedCount} missions imported, ${imported.replacedCount} replaced, ${imported.warningCount} warnings.`,
+              details: issueDetails.length ? issueDetails : undefined,
+            },
+          });
+          missionPanelRefresh.emit({
+            activeMissionId: imported.activeMissionId,
+          });
+        } catch (error) {
+          refreshExportControls({
+            selectedModelId: loadedModelId,
+            notice: errorNotice(error),
+          });
+        }
         BUI.ContextMenu.removeMenus();
+      } catch (error) {
+        refreshExportControls({ notice: errorNotice(error) });
       } finally {
         target.loading = false;
       }
@@ -256,12 +336,24 @@ export const modelsPanelTemplate: BUI.StatefullComponent<ModelsPanelState> = (
         const model = await fragments.core.load(bytes, {
           modelId,
         });
+        await importLoadedModelMissions(
+          ifcMissionRoundtrip,
+          "fragments",
+          model.modelId,
+          file.name,
+          bytes,
+        );
         refreshExportControls({
           selectedModelId: model.modelId,
-          notice:
-            "Fragments loaded without an IFC source. Trustworthy IFC export is unavailable for this model.",
+          notice: {
+            severity: "info",
+            summary:
+              "Fragments loaded without an IFC source. Mission import and trustworthy IFC export are unavailable for this model.",
+          },
         });
         BUI.ContextMenu.removeMenus();
+      } catch (error) {
+        refreshExportControls({ notice: errorNotice(error) });
       } finally {
         target.loading = false;
       }

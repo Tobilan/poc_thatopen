@@ -12,6 +12,7 @@ import "./ifc-mission-writer.test";
 import "./ifc-mission-replacer.test";
 import "./ifc-mission-export.integration.test";
 import "./ifc-mission-replacement.integration.test";
+import "./ifc-mission-roundtrip-coordinator.test";
 import "./ifc-mission-reader.test";
 import "./import-robot-missions.test";
 import "./robot-mission-semantic-comparison.test";

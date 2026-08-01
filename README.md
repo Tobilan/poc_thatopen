@@ -19,6 +19,7 @@ The repository implements an end-to-end proof of concept for:
 - persisting the internal mission model in memory or browser `localStorage`;
 - validating task semantics and dependency graphs;
 - mapping missions to IFC entities and relations;
+- importing recognized mission annotations from directly loaded IFC files into the active repository;
 - writing missions into source-backed IFC4/IFC4X3 STEP files;
 - reopening and verifying the generated IFC before it is downloaded.
 
@@ -78,8 +79,9 @@ When an IFC is imported:
 1. `web-ifc` parses the source IFC.
 2. That Open converts it to a Fragments model for browser rendering.
 3. The original IFC bytes and file name are retained in an in-memory source registry.
-4. Robot tasks refer to selected IFC objects primarily by `GlobalId`.
-5. Export reopens the retained IFC source and adds the mission entities.
+4. The mission importer reconstructs recognized project-owned annotations and bulk-upserts valid missions into the active repository without clearing unrelated missions.
+5. Robot tasks refer to selected IFC objects primarily by `GlobalId` and retain the source `modelId` for roundtrip scoping.
+6. Export replaces the selected source's mission graph, verifies it, and advances the in-memory source to those verified bytes for the next cycle.
 
 An imported `.frag` file can be viewed, but it has no retained IFC source and therefore cannot currently be exported as a trustworthy IFC file.
 
@@ -93,7 +95,8 @@ The main layout contains the model panel, 3D viewport, selection data, robot mis
 - Load existing `.frag` files directly.
 - Display and search loaded models.
 - Select a source-backed IFC model as the export target.
-- Export the model with every mission in the currently active mission store.
+- Import valid mission annotations after a direct IFC has loaded and refresh the existing mission editor.
+- Export the selected model only with missions associated with that source, plus unassigned missions whose explicit references belong to it.
 - Report unsupported sources, structural edits, invalid missions, and unresolved object references instead of producing a misleading file.
 
 ### 3D viewer
@@ -159,8 +162,8 @@ The standalone viewpoint panel and the optional `RobotTask.viewpoint` annotation
 ## Typical annotation workflow
 
 1. Start the application and import an IFC file through the Models panel.
-2. Choose **No storage** for a temporary draft or **Local storage** for browser persistence.
-3. Create a mission.
+2. Existing valid robot missions are imported into the currently selected storage mode and become editable immediately. A file without annotations is a normal load.
+3. Choose **No storage** for a temporary draft or **Local storage** for browser persistence before loading if imported missions should use that mode, then create or select a mission.
 4. Add an executable task such as `OPEN` or `NAVIGATE_TO`.
 5. Click an IFC object in the viewer.
 6. If several objects overlap, select and confirm the intended candidate.
@@ -357,7 +360,9 @@ flowchart LR
 
 The exporter currently supports `IFC4`, `IFC4X3`, `IFC4X3_ADD1`, and `IFC4X3_ADD2`. `IFC2X3` is rejected because the mission writer does not perform a schema conversion.
 
-Export is a full replacement of the recognized application-owned annotation graph, not an append operation. The supplied mission collection is authoritative for the selected IFC: matching mission IDs are updated, new IDs are added, and an imported owned mission omitted from the collection is removed. Passing an empty collection removes every recognized project-owned mission. Repeated import/export cycles therefore do not accumulate duplicate tasks, schedules, property sets, or relations.
+Export is a full replacement of the recognized application-owned annotation graph, not an append operation. The source-scoped mission collection is authoritative for the selected IFC: matching mission IDs are updated, new IDs are added, and an imported owned mission omitted from the collection is removed. Repeated import/export cycles therefore do not accumulate duplicate tasks, schedules, property sets, or relations. Only after save/reopen/reimport and semantic comparison succeed do the verified output bytes become the source of the next browser export.
+
+Mission/source association is infrastructure metadata, not part of `RobotMission`. An imported mission is associated with its runtime source model and the storage mode active during import. A mission already associated with another loaded IFC is excluded from the selected target. A newly authored, unassigned mission is claimed by the selected target only after a successful export, and any explicit object reference to another `modelId` blocks that export. Switching storage modes never copies data; it also blocks export of a source associated with a different mode until the original mode is active again.
 
 The replacement boundary is deliberately narrow. Only entities identified by the importer as belonging to a complete `RobotMission` graph and associated with deterministic provenance may be removed. Building entities, building-object GlobalIds, unrelated `IfcTask`/`IfcWorkSchedule` process plans, unrelated property sets, unrelated relations, the source header, and the source schema remain outside that ownership boundary.
 
@@ -365,6 +370,8 @@ Export safety rules:
 
 - only models with a retained direct IFC source are exportable;
 - arbitrary `.frag` files are view-only for IFC export purposes;
+- a source with malformed recognized annotations remains viewable but is unsafe for mission export until a corrected IFC is reloaded;
+- mission/source association and the active storage mode must match the selected export target;
 - structural Fragments edits mark the source-backed model as unsafe to export;
 - every current mission must pass domain validation;
 - duplicate mission, task, deterministic record, provenance, or preserved GlobalId claims stop replacement;
@@ -378,9 +385,9 @@ Export safety rules:
 - the saved output must reopen with the same schema and contain exactly one owned graph per current mission ID;
 - every generated entity and relation is verified, missions are reimported, and export fails if semantic comparison differs from the intended aggregates.
 
-## Read-only IFC mission import
+## IFC mission import
 
-The read path is separate from source-backed export and does not parse STEP text. `IfcMissionImportService` owns the isolated `web-ifc` runtime and source-byte lifecycle; `WebIfcMissionReader` reads entities, detects project-owned graphs, validates their relations, reconstructs domain aggregates, and runs the existing domain validation.
+The read path is separate from source-backed export and does not parse STEP text. `IfcMissionImportService` owns the isolated `web-ifc` runtime and source-byte lifecycle; `WebIfcMissionReader` reads entities, detects project-owned graphs, validates their relations, reconstructs domain aggregates, and runs the existing domain validation. After a direct IFC is successfully rendered and its source bytes are registered, the browser orchestration invokes this importer and uses the existing `importRobotMissions` bulk-upsert boundary.
 
 ```text
 IFC bytes
@@ -417,7 +424,7 @@ Pre-version files remain readable through documented compatibility behavior:
 
 The next successful export writes schema version `1.0.0`, writes the derived compatibility sequence ID explicitly, and writes the schedule marker. Reimporting that normalized file no longer produces those legacy compatibility warnings.
 
-Run 2 uses the importer internally for safe replacement and post-write verification, but browser model-loading does not yet import missions into the application repository. Connecting direct IFC loading, repository import, source association, and UI feedback remains the explicit Run-3 integration step. The existing application-level `importRobotMissions(repository, missions)` operation is the intended bulk-upsert boundary.
+Valid missions replace matching repository IDs while unrelated IDs remain untouched, and imported audit timestamps are preserved until an application command edits the aggregate. Blocking issues suppress their malformed mission; independent valid missions may still import with an explicit partial-success notice. The loaded building remains available, but any blocking import issue marks that source unsafe for mission export. Removing the model unregisters its provenance and safety state without deleting repository missions.
 
 ## Storage concept
 
@@ -453,7 +460,9 @@ Important storage properties:
 - legacy keys are not read, migrated, or deleted;
 - switching storage modes does not copy, merge, or remove missions;
 - IFC source bytes remain session-only in the separate `IfcSourceModelRegistry`;
-- export reads missions only from the currently active storage mode.
+- import and export use the currently active storage mode without switching it automatically;
+- unavailable backend storage produces a visible import/export error;
+- export reads source-associated missions only from the currently active storage mode.
 
 ## Architecture
 
@@ -497,6 +506,7 @@ flowchart TB
     Writer[Schema adapter and web-ifc writer]
     Codec[Save, reopen, and verification codec]
     Importer[Read-only web-ifc mission importer]
+    Roundtrip[Source-scoped roundtrip coordinator]
   end
 
   Main --> Models
@@ -511,6 +521,7 @@ flowchart TB
   Main --> Registry
   Main --> ExportService
   Main --> Codec
+  Main --> Roundtrip
 
   MissionUI --> Service
   SelectionUI --> Selection
@@ -520,8 +531,10 @@ flowchart TB
   Service --> Validation
   Service --> RepoPort
   Repositories -. implements .-> RepoPort
-  Models --> Service
-  Models --> ExportService
+  Models --> Roundtrip
+  Roundtrip --> RepoPort
+  Roundtrip --> Importer
+  Roundtrip --> ExportService
   ExportService --> Registry
   ExportService --> Mapper
   ExportService --> Codec
@@ -543,6 +556,7 @@ flowchart TB
 | IFC mapping      | [`src/ifc/robot-tasks/`](src/ifc/robot-tasks/)                 | Pure domain-to-IFC record graph                                                                  |
 | IFC export       | [`src/ifc/model-export/`](src/ifc/model-export/)               | Source registry, schema selection, STEP writing, and independent verification                    |
 | IFC import       | [`src/ifc/model-import/`](src/ifc/model-import/)               | Read-only web-ifc access, owned-graph validation, reconstruction, issues, and provenance         |
+| IFC orchestration | [`src/ifc/model-roundtrip/`](src/ifc/model-roundtrip/)         | Active-repository upsert, source association, safety state, scoped export, and source advancement |
 | UI               | [`src/ui-templates/`](src/ui-templates/)                       | Model, selection, mission, viewpoint, and viewer-tool components                                 |
 | Tests            | [`test/robot-tasks/`](test/robot-tasks/)                       | Domain, application, persistence, selection, mapping, writer, and real web-ifc integration tests |
 
@@ -690,7 +704,7 @@ npm run build
 npx eslint src test --ext .ts
 ```
 
-The integration tests exercise real `web-ifc` output for IFC4, IFC4X3, IFC4X3 addenda, task timing, property sets, object assignments, identity-preserving replacement, repeated roundtrips, mission removal, and multiple missions in one export.
+The integration tests exercise real `web-ifc` output for IFC4, IFC4X3, IFC4X3 addenda, task timing, property sets, object assignments, identity-preserving replacement, repeated roundtrips, mission removal, multiple missions, source-scoped orchestration, and a two-cycle load/edit/export/reload acceptance flow through the command layer.
 
 ## Current limitations and planned extensions
 
@@ -699,7 +713,6 @@ The integration tests exercise real `web-ifc` output for IFC4, IFC4X3, IFC4X3 ad
 - Structural Fragments changes cannot yet be mapped safely back to IFC.
 - IFC2X3 mission writing is unsupported.
 - Pre-run-2 files without explicit sequence IDs or schedule markers require the documented compatibility inference on their first import; the next export normalizes them to annotation schema `1.0.0`.
-- Browser model-loading still does not import reconstructed missions or provenance into the application repository; that source-association and UI integration belongs to Run 3.
 - The PoC does not perform path planning or physical robot control.
 - Viewpoints and marker positions are supported by the domain/mapping layer but need deeper mission-editor integration.
 - Complete IFC editing, BCF workflows, authentication, and multi-user synchronization remain future work.

@@ -19,6 +19,7 @@ import type {
 } from "../../application/robot-tasks";
 import { appIcons } from "../../globals";
 import type { ViewerObjectSelectionManager } from "../../viewer/robot-tasks";
+import type { RobotMissionPanelRefresh } from "./robotMissionPanelRefresh";
 
 /** Dependencies supplied by the composition root to the mission/task panel. */
 export interface RobotMissionTasksPanelState {
@@ -30,6 +31,9 @@ export interface RobotMissionTasksPanelState {
 
   /** Viewer adapter that exposes only confirmed, stable IFC object references. */
   selectionManager: ViewerObjectSelectionManager;
+
+  /** Rerender signal used after the model loader imports IFC annotations. */
+  panelRefresh: RobotMissionPanelRefresh;
 }
 
 /** Mutable presentation state local to the mission/task panel. */
@@ -588,6 +592,9 @@ export const robotMissionTasksPanelTemplate: BUI.StatefullComponent<
   updateContent = contentUpdater;
 
   state.selectionManager.subscribe(() => refresh());
+  state.panelRefresh.subscribe(({ activeMissionId }) =>
+    refresh({ activeMissionId }),
+  );
 
   return BUI.html`
     <bim-panel-section fixed icon=${appIcons.TASK} label="Robot Missions">

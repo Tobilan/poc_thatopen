@@ -527,6 +527,23 @@ bim-grid[floating] .dashboard-card {
   overflow-wrap: anywhere;
 }
 
+.ifc-export-notice.warning {
+  border-left-color: #f1bf5a;
+}
+
+.ifc-export-notice.error {
+  border-left-color: #ff7777;
+}
+
+.ifc-export-notice p {
+  margin: 0;
+}
+
+.ifc-export-notice details,
+.ifc-export-notice ul {
+  margin-top: 0.35rem;
+}
+
 @media (max-width: 850px) {
   .robot-mission-create,
   .robot-task-create,
