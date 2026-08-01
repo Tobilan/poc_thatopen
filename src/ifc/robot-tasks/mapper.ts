@@ -7,6 +7,7 @@ import type {
   RobotTask,
   RobotTaskPriority,
 } from "../../domain/robot-tasks";
+import { ROBOT_MISSION_ANNOTATION_SCHEMA_VERSION } from "./annotationSchema";
 import type {
   IfcExternalObjectReference,
   IfcProcessAssignmentName,
@@ -301,6 +302,22 @@ const mapMissionMetadata = (
     "UpdatedAt",
     mission.updatedAt,
   );
+  addSingleValue(
+    records,
+    propertyReferences,
+    "RobotMission",
+    mission.id,
+    "AnnotationSchemaVersion",
+    ROBOT_MISSION_ANNOTATION_SCHEMA_VERSION,
+  );
+  addSingleValue(
+    records,
+    propertyReferences,
+    "RobotMission",
+    mission.id,
+    "HasExplicitSchedule",
+    mission.schedule !== undefined,
+  );
   const propertySet: IfcPropertySetRecord = {
     entity: "IfcPropertySet",
     id: recordId("property-set", "RobotMission", mission.id),
@@ -483,6 +500,7 @@ export const mapMissionToIfcRecords = (
     records.push({
       entity: "IfcRelSequence",
       id: recordId("relation", "sequence", sequence.id),
+      sourceId: sequence.id,
       relatingProcess: reference(predecessor.entity, predecessor.id),
       relatedProcess: reference(successor.entity, successor.id),
       sequenceType: sequence.sequenceType,

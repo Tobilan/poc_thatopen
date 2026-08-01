@@ -19,6 +19,8 @@ import {
   IfcSourceModelRegistry,
   WebIfcStructuralCodec,
 } from "./ifc/model-export";
+import { IfcMissionImportService } from "./ifc/model-import";
+import { IfcMissionRoundtripCoordinator } from "./ifc/model-roundtrip";
 
 BUI.Manager.init();
 
@@ -176,6 +178,18 @@ const robotMissionRepository = new SelectableRobotMissionRepository(
   window.localStorage,
 );
 const robotMissionService = new RobotMissionService(robotMissionRepository);
+const ifcMissionRoundtrip = new IfcMissionRoundtripCoordinator({
+  repository: robotMissionRepository,
+  storageSelection: robotMissionRepository,
+  importer: new IfcMissionImportService({
+    wasmPath: ifcLoader.settings.wasm.path,
+    wasmAbsolute: ifcLoader.settings.wasm.absolute,
+    customLocateFileHandler:
+      ifcLoader.settings.customLocateFileHandler ?? undefined,
+  }),
+  exporter: ifcExportService,
+  sources: ifcSourceRegistry,
+});
 
 const selectionCanvas = world.renderer.three.domElement;
 let primaryPointerDown:
@@ -306,6 +320,7 @@ fragments.list.onItemSet.add(async ({ value: model }) => {
 fragments.list.onItemDeleted.add((modelId) => {
   modelProvenance.unregisterModel(modelId);
   ifcSourceRegistry.unregister(modelId);
+  ifcMissionRoundtrip.unregisterModel(modelId);
   selectionMetadata.clearCache(modelId);
   selectionManager.invalidateCandidateSession();
 });
@@ -344,7 +359,7 @@ const [contentGrid] = BUI.Component.create<
   selectionManager,
   modelProvenance,
   ifcSourceRegistry,
-  ifcExportService,
+  ifcMissionRoundtrip,
   missionService: robotMissionService,
   missionStorageSelection: robotMissionRepository,
 });

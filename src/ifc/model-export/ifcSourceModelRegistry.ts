@@ -8,7 +8,7 @@ export interface IfcSourceModel {
   /** Original IFC file name used to derive a meaningful download name. */
   fileName: string;
 
-  /** Original IFC STEP bytes treated as immutable after registration. */
+  /** Latest structurally verified IFC STEP bytes for this loaded model. */
   bytes: Uint8Array;
 }
 
@@ -55,6 +55,32 @@ export class IfcSourceModelRegistry {
       bytes: source.bytes,
     });
     this.structurallyChangedModelIds.delete(modelId);
+  }
+
+  /**
+   * Advances a retained source after a complete write/reopen/import check.
+   *
+   * Keeping the last verified bytes makes later exports true replacements of
+   * the previous annotation graph, including its preserved IFC GlobalIds.
+   * The original upload name remains stable for every generated download.
+   *
+   * @param modelId Runtime model whose verified source should advance.
+   * @param bytes Fully validated replacement IFC bytes.
+   */
+  replaceVerifiedBytes(modelId: string, bytes: Uint8Array): void {
+    const normalizedModelId = modelId.trim();
+    const source = this.sources.get(normalizedModelId);
+    if (!source) {
+      throw new IfcModelExportError(
+        "Verified IFC bytes require an existing source-backed model.",
+      );
+    }
+    if (!bytes.byteLength) {
+      throw new IfcModelExportError(
+        "Verified IFC source bytes cannot be empty.",
+      );
+    }
+    this.sources.set(normalizedModelId, { ...source, bytes });
   }
 
   /**

@@ -21,7 +21,11 @@ export interface IfcModelExportResult {
 
 /** Optional mission and structural-edit inputs for one model export. */
 export interface IfcModelExportOptions {
-  /** Current internal missions to serialize into the selected source IFC. */
+  /**
+   * Authoritative project-owned mission collection for the selected IFC.
+   * Supplying an empty collection removes all recognized owned annotations;
+   * omitting the property retains the older structural-rewrite-only operation.
+   */
   missions?: readonly RobotMission[];
 
   /** Whether unsupported structural Fragments edits are present. */
@@ -57,7 +61,7 @@ export class IfcModelExportService {
    * Produces a structurally validated IFC for one loaded Fragments model.
    *
    * @param modelId Runtime Fragments model identifier selected by the user.
-   * @param hasStructuralChanges Whether unsupported Fragments edits are present.
+   * @param options Authoritative missions and structural-edit state.
    * @returns Download-ready IFC bytes, name, and verified schema.
    */
   async exportModel(
@@ -82,11 +86,13 @@ export class IfcModelExportService {
         "This Fragments model contains structural edits that cannot yet be mapped safely back to IFC.",
       );
     }
+    const hasAuthoritativeMissions = normalizedOptions.missions !== undefined;
     const missions = normalizedOptions.missions ?? [];
-    const validated = missions.length
-      ? await this.codec.writeMissionsAndValidate(
+    const validated = hasAuthoritativeMissions
+      ? await this.codec.replaceMissionsAndValidate(
           source.bytes,
           source.modelId,
+          missions,
           missions.map(mapMissionToIfcRecords),
         )
       : await this.codec.rewriteAndValidate(source.bytes);

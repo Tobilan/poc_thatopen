@@ -14,10 +14,8 @@ import type {
   RobotMissionService,
   RobotMissionStorageSelection,
 } from "../../application/robot-tasks";
-import type {
-  IfcModelExportService,
-  IfcSourceModelRegistry,
-} from "../../ifc/model-export";
+import type { IfcSourceModelRegistry } from "../../ifc/model-export";
+import type { IfcMissionRoundtripCoordinator } from "../../ifc/model-roundtrip";
 
 type Viewer = "viewer";
 
@@ -56,7 +54,7 @@ export interface ContentGridState {
   selectionManager: ViewerObjectSelectionManager;
   modelProvenance: DirectIfcModelProvenance;
   ifcSourceRegistry: IfcSourceModelRegistry;
-  ifcExportService: IfcModelExportService;
+  ifcMissionRoundtrip: IfcMissionRoundtripCoordinator;
   missionService: RobotMissionService;
   missionStorageSelection: RobotMissionStorageSelection;
 }
@@ -70,10 +68,11 @@ export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
     selectionManager,
     modelProvenance,
     ifcSourceRegistry,
-    ifcExportService,
+    ifcMissionRoundtrip,
     missionService,
     missionStorageSelection,
   } = state;
+  const missionPanelRefresh = new TEMPLATES.RobotMissionPanelRefresh();
 
   const onCreated = (e?: Element) => {
     if (!e) return;
@@ -86,8 +85,8 @@ export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
           components,
           modelProvenance,
           ifcSourceRegistry,
-          ifcExportService,
-          missionService,
+          ifcMissionRoundtrip,
+          missionPanelRefresh,
         },
       },
       elementData: {
@@ -100,6 +99,7 @@ export const contentGridTemplate: BUI.StatefullComponent<ContentGridState> = (
           missionService,
           missionStorageSelection,
           selectionManager,
+          panelRefresh: missionPanelRefresh,
         },
       },
       viewpoints: {

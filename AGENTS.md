@@ -674,7 +674,7 @@ Empfohlene Reihenfolge:
 7. Optional Viewpoint und Markerposition speichern.
 8. Später Export als JSON, BCF oder IFC-kompatible Struktur prüfen.
 
-IFC-Roundtrip, also das zuverlässige Zurückschreiben geänderter Daten in eine IFC-Datei, ist eine spätere Ausbaustufe.
+Der Roundtrip für RobotMission-Annotationen ist quellgestützt implementiert. Ein vollständiger Roundtrip beliebiger struktureller IFC-/Fragments-Änderungen bleibt eine spätere Ausbaustufe.
 
 ## Verhalten zukünftiger KI-/Coding-Agenten
 
@@ -689,6 +689,12 @@ Wenn ein Agent an diesem Projekt arbeitet, soll er:
 - IFC-Elementbezug über `GlobalId` erhalten
 - interne Fragment-IDs nicht als einzige dauerhafte fachliche Referenz verwenden
 - das interne Task-Modell vom IFC-Mapping trennen
+- den Mission-Import erst nach erfolgreichem direktem IFC-Laden und Registrierung der Quellbytes ausführen
+- Quellzuordnung, IFC-Provenienz und Export-Sicherheitsstatus außerhalb des Domain-Modells halten
+- bei mehreren geladenen Modellen Missionen nur für das explizit ausgewählte Quellmodell exportieren und modellfremde Referenzen ablehnen
+- bei fehlerhaften erkannten Missionsgraphen das Gebäudemodell geladen lassen, die Quelle aber bis zu einem korrigierten Neuladen für Missionsexport sperren
+- nach einem Export die registrierten Quellbytes nur dann fortschreiben, wenn Schreiben, erneutes Öffnen, Reimport und semantischer Vergleich erfolgreich waren
+- beim Entfernen eines Modells dessen Quell-Provenienz und Sicherheitsstatus abmelden, ohne gespeicherte Missionen implizit zu löschen
 - konkrete RobotAction-Daten am Task modellieren, nicht am Zielobjekt
 - `IfcTaskTime` als Task-Zeitmodell behandeln, nicht als PropertySet
 - Custom Property Sets nicht mit `Pset_` benennen
