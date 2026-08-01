@@ -7,7 +7,12 @@ import {
   addTaskToMission,
   createRobotMission,
   createRobotTask,
+  type RobotMission,
 } from "../../src/domain/robot-tasks";
+import {
+  IfcMissionImportService,
+  type IfcMissionImportApiPort,
+} from "../../src/ifc/model-import";
 import {
   WebIfcStructuralCodec,
   type IfcApiPort,
@@ -113,6 +118,32 @@ const missionGraph = (suffix = "") => {
   );
 };
 
+/** Compares only domain semantics, allowing IFC lexical canonicalization. */
+const semanticMission = (mission: RobotMission) => ({
+  id: mission.id,
+  name: mission.name,
+  tasks: mission.tasks.map((task) => ({
+    id: task.id,
+    name: task.name,
+    actionType: task.actionType,
+    targets: task.targetObjects.map((reference) => reference.globalId),
+    affected: task.affectedObjects.map((reference) => reference.globalId),
+    time: task.time,
+    viewpoint: task.viewpoint,
+    markerPosition: task.markerPosition,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+  })),
+  sequences: mission.sequences.map((sequence) => ({
+    predecessorTaskId: sequence.predecessorTaskId,
+    successorTaskId: sequence.successorTaskId,
+    sequenceType: sequence.sequenceType,
+  })),
+  schedule: mission.schedule,
+  createdAt: mission.createdAt,
+  updatedAt: mission.updatedAt,
+});
+
 /** Opens result bytes independently to assert original and generated entities. */
 const inspectResult = async (
   bytes: Uint8Array,
@@ -177,4 +208,91 @@ test("multiple mission graphs survive one real web-ifc export", async () => {
   );
 
   await inspectResult(result.bytes, "IFC4", 6);
+});
+
+test("domain mission survives existing writer and new real web-ifc importer semantically", async () => {
+  const wasmPath = `${path.resolve("node_modules/web-ifc")}${path.sep}`;
+  const codec = new WebIfcStructuralCodec({
+    wasmPath,
+    wasmAbsolute: true,
+    createApi: () => new NodeIfcAPI() as unknown as IfcApiPort,
+  });
+  const graph = missionGraph("-roundtrip");
+  const exported = await codec.writeMissionsAndValidate(
+    sourceIfc("IFC4"),
+    "direct-ifc-model",
+    [graph],
+  );
+  const imported = await new IfcMissionImportService({
+    wasmPath,
+    wasmAbsolute: true,
+    createApi: () => new NodeIfcAPI() as unknown as IfcMissionImportApiPort,
+  }).import(exported.bytes, "direct-ifc-model");
+
+  assert.equal(imported.missions.length, 1, JSON.stringify(imported.issues));
+  assert.deepEqual(semanticMission(imported.missions[0]), {
+    id: "mission-integration-roundtrip",
+    name: "Integration mission-roundtrip",
+    tasks: [
+      {
+        id: "navigate-integration-roundtrip",
+        name: "Navigate to target",
+        actionType: "NAVIGATE_TO",
+        targets: [targetGlobalId],
+        affected: [],
+        time: {
+          scheduleStart: "2026-01-01T08:30:00",
+          scheduleFinish: undefined,
+          scheduleDuration: "PT10M",
+          actualStart: undefined,
+          actualFinish: undefined,
+          remainingTime: undefined,
+          completion: undefined,
+        },
+        viewpoint: { cameraPosition: [1, 2, 3], cameraTarget: [4, 5, 6] },
+        markerPosition: [7, 8, 9],
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      },
+      {
+        id: "pass-through-integration-roundtrip",
+        name: "Pass through target",
+        actionType: "PASS_THROUGH",
+        targets: [],
+        affected: [targetGlobalId],
+        time: undefined,
+        viewpoint: undefined,
+        markerPosition: undefined,
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      },
+    ],
+    sequences: [
+      {
+        predecessorTaskId: "navigate-integration-roundtrip",
+        successorTaskId: "pass-through-integration-roundtrip",
+        sequenceType: "FINISH_START",
+      },
+    ],
+    schedule: {
+      id: "schedule-integration-roundtrip",
+      name: "Integration schedule-roundtrip",
+      scheduleStart: "2026-01-01T00:00:00Z",
+      scheduleFinish: undefined,
+      scheduleDuration: "PT10M",
+    },
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+  });
+  assert.ok(
+    imported.issues.some(
+      (entry) => entry.code === "IFC_SEQUENCE_ID_COMPATIBILITY_FALLBACK",
+    ),
+  );
+  assert.ok(
+    imported.issues.some(
+      (entry) => entry.code === "IFC_SCHEDULE_AUTHORED_STATE_UNKNOWN",
+    ),
+  );
+  assert.ok(imported.provenance.entities.length > 10);
 });

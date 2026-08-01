@@ -6,5 +6,6 @@
  * respective outer layers.
  */
 export * from "./missionRepository";
+export * from "./importRobotMissions";
 export * from "./robotMissionService";
 export * from "./robotMissionServiceError";

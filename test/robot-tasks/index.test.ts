@@ -10,6 +10,8 @@ import "./ifc-relation-mapper.test";
 import "./ifc-model-export.test";
 import "./ifc-mission-writer.test";
 import "./ifc-mission-export.integration.test";
+import "./ifc-mission-reader.test";
+import "./import-robot-missions.test";
 import "./robot-mission-persistence.test";
 import "./robot-mission-service.test";
 import "./selectable-mission-repository.test";

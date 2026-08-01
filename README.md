@@ -367,6 +367,42 @@ Export safety rules:
 - the saved output must reopen with the same schema;
 - every generated mission entity and relationship is verified after reopening.
 
+## Read-only IFC mission import
+
+The read path is separate from source-backed export and does not parse STEP text. `IfcMissionImportService` owns the isolated `web-ifc` runtime and source-byte lifecycle; `WebIfcMissionReader` reads entities, detects project-owned graphs, validates their relations, reconstructs domain aggregates, and runs the existing domain validation.
+
+```text
+IFC bytes
+-> isolated web-ifc model
+-> project ownership detection
+-> graph validation
+-> RobotMission reconstruction
+-> domain validation
+-> structured result and provenance
+```
+
+Ownership is intentionally narrow. A mission root must be an `IfcTask` with `ObjectType = RobotMission`, `PredefinedType = USERDEFINED`, and a stable `Identification`. Its children must be connected by one `IfcRelNests`, use `ObjectType = RobotTask` and `PredefinedType = USERDEFINED`, and carry task-owned `RobotAction` and `RobotTask` property sets. The root carries `RobotMission`. Unrelated tasks, schedules, hierarchies, assignments, and property sets are ignored. A file containing no owned mission is a successful empty import.
+
+Each valid aggregate reconstructs mission/task identity, descriptive metadata, status, priority, hierarchy order, explicit dependencies, task time, schedule data, action semantics, task annotations, audit timestamps, and source-scoped object references. Action values are read only from the task-owned `RobotAction` set and are never inferred from building objects. Contradictory or ambiguous relations block only their owning mission; independent valid missions still import.
+
+```ts
+interface IfcMissionImportResult {
+  missions: RobotMission[];
+  issues: IfcMissionImportIssue[];
+  provenance: IfcMissionRoundtripProvenance;
+  schema: string;
+}
+```
+
+Provenance remains outside the domain. For recognized application-owned entities it retains mission ownership, entity type, express ID, optional IFC GlobalId, owning mission/task ID, and a deterministic graph-record identity where the current mapping makes one derivable. The runtime `modelId` scopes every imported local express ID.
+
+Two compatibility warnings are expected for files written before the next export revision:
+
+- `IfcRelSequence` does not yet store the domain sequence ID. Import derives a deterministic `sequence/<predecessor>/<successor>/<type>` ID.
+- the exporter currently creates a work schedule even when no explicit domain schedule existed. Import reconstructs the available schedule but cannot distinguish generated fallback data from authored data.
+
+The UI does not invoke this importer yet. The application-level `importRobotMissions(repository, missions)` operation can upsert reconstructed aggregates while preserving imported timestamps and unrelated repository entries, but it is intentionally not connected to `models.ts` in this implementation run.
+
 ## Storage concept
 
 Mission persistence is separated from model rendering and IFC export through a `RobotMissionRepository` port.
@@ -444,6 +480,7 @@ flowchart TB
     ExportService[IFC model export service]
     Writer[Schema adapter and web-ifc writer]
     Codec[Save, reopen, and verification codec]
+    Importer[Read-only web-ifc mission importer]
   end
 
   Main --> Models
@@ -473,6 +510,7 @@ flowchart TB
   ExportService --> Mapper
   ExportService --> Codec
   Codec --> Writer
+  Importer --> Types
   Mapper --> Validation
   Mapper --> Types
 ```
@@ -488,6 +526,7 @@ flowchart TB
 | Viewer adapters  | [`src/viewer/robot-tasks/`](src/viewer/robot-tasks/)           | Fragments selection, metadata resolution, stable IFC reference conversion, highlights            |
 | IFC mapping      | [`src/ifc/robot-tasks/`](src/ifc/robot-tasks/)                 | Pure domain-to-IFC record graph                                                                  |
 | IFC export       | [`src/ifc/model-export/`](src/ifc/model-export/)               | Source registry, schema selection, STEP writing, and independent verification                    |
+| IFC import       | [`src/ifc/model-import/`](src/ifc/model-import/)               | Read-only web-ifc access, owned-graph validation, reconstruction, issues, and provenance         |
 | UI               | [`src/ui-templates/`](src/ui-templates/)                       | Model, selection, mission, viewpoint, and viewer-tool components                                 |
 | Tests            | [`test/robot-tasks/`](test/robot-tasks/)                       | Domain, application, persistence, selection, mapping, writer, and real web-ifc integration tests |
 
@@ -643,6 +682,9 @@ The integration tests exercise real `web-ifc` output for IFC4, IFC4X3, IFC4X3 ad
 - `.frag` files without a retained IFC source cannot be exported to IFC.
 - Structural Fragments changes cannot yet be mapped safely back to IFC.
 - IFC2X3 mission writing is unsupported.
+- Imported pre-run-2 files use deterministic compatibility sequence IDs because explicit sequence IDs are not yet written.
+- Imported pre-run-2 schedules cannot be classified reliably as authored or exporter-generated fallback schedules.
+- Read-only mission import is not connected to the model-loading UI yet; duplicate-free replacement export belongs to the next implementation run.
 - The PoC does not perform path planning or physical robot control.
 - Viewpoints and marker positions are supported by the domain/mapping layer but need deeper mission-editor integration.
 - Complete IFC editing, BCF workflows, authentication, and multi-user synchronization remain future work.
