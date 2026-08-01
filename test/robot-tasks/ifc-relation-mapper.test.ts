@@ -12,6 +12,7 @@ import type {
 } from "../../src/domain/robot-tasks";
 import {
   IfcRobotTaskMappingError,
+  ROBOT_MISSION_ANNOTATION_SCHEMA_VERSION,
   mapMissionToIfcRecords,
 } from "../../src/ifc/robot-tasks";
 import type {
@@ -261,6 +262,10 @@ test("mission hierarchy, task time, and execution sequence map to IFC-like recor
 
   const sequences = recordsOf(graph, "IfcRelSequence");
   assert.equal(sequences.length, 2);
+  assert.deepEqual(
+    sequences.map((sequence) => sequence.sourceId),
+    ["execution-order-1", "execution-order-2"],
+  );
   assert.ok(
     sequences.every((sequence) => sequence.sequenceType === "FINISH_START"),
   );
@@ -307,6 +312,43 @@ test("mission and task metadata map to custom task-owned property sets", () => {
   );
   assert.ok(metadataNames.has("CreatedAt"));
   assert.ok(metadataNames.has("UpdatedAt"));
+  assert.ok(metadataNames.has("AnnotationSchemaVersion"));
+  assert.ok(metadataNames.has("HasExplicitSchedule"));
+
+  const missionMetadata = recordsOf(graph, "IfcPropertySet").find(
+    (propertySet) => propertySet.name === "RobotMission",
+  );
+  assert.ok(missionMetadata);
+  const missionMetadataPropertyIds = new Set(
+    missionMetadata.hasProperties.map((property) => property.id),
+  );
+  const missionMetadataProperties = recordsOf(
+    graph,
+    "IfcPropertySingleValue",
+  ).filter((property) => missionMetadataPropertyIds.has(property.id));
+  assert.equal(
+    missionMetadataProperties.find(
+      (property) => property.name === "AnnotationSchemaVersion",
+    )?.nominalValue,
+    ROBOT_MISSION_ANNOTATION_SCHEMA_VERSION,
+  );
+  assert.equal(
+    missionMetadataProperties.find(
+      (property) => property.name === "HasExplicitSchedule",
+    )?.nominalValue,
+    true,
+  );
+
+  const graphWithoutExplicitSchedule = mapMissionToIfcRecords({
+    ...createMappedMission(),
+    schedule: undefined,
+  });
+  assert.equal(
+    recordsOf(graphWithoutExplicitSchedule, "IfcPropertySingleValue").find(
+      (property) => property.name === "HasExplicitSchedule",
+    )?.nominalValue,
+    false,
+  );
   assert.ok(
     recordsOf(graph, "IfcRelDefinesByProperties").every((relation) =>
       relation.relatedObjects.every((object) => object.entity === "IfcTask"),

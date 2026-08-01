@@ -1,5 +1,6 @@
 import {
   Handle,
+  IFCGLOBALLYUNIQUEID,
   IFCOBJECTDEFINITION,
   IFCOWNERHISTORY,
   IFCPRODUCT,
@@ -72,11 +73,29 @@ export interface IfcMissionWriterApiPort {
   /** Creates a valid schema-specific 22-character IFC GlobalId value. */
   CreateIFCGloballyUniqueId(modelID: number): unknown;
 
+  /** Creates a schema-specific wrapped IFC value of the requested type. */
+  CreateIfcType(modelID: number, type: number, value: unknown): unknown;
+
   /** Inserts one new line with its preallocated express ID into the model. */
   WriteLine<Type extends IfcLineObject>(
     modelID: number,
     lineObject: Type,
   ): void;
+}
+
+/** Existing IFC identity retained for one deterministic graph record. */
+export interface IfcPreservedGlobalId {
+  /** Persistent IFC identity read from the source model. */
+  globalId: string;
+
+  /** Source express ID against which the GlobalId must be verified. */
+  expressId: number;
+}
+
+/** Optional identity inputs used while preparing one mission graph write. */
+export interface IfcMissionWriterOptions {
+  /** Existing source identities indexed by deterministic graph record ID. */
+  preservedGlobalIds?: ReadonlyMap<string, IfcPreservedGlobalId>;
 }
 
 /** One generated record retained for the independent verification pass. */
@@ -331,6 +350,7 @@ export class WebIfcMissionWriter {
    * @param sourceModelId Runtime model ID that scopes express-ID fallbacks.
    * @param graph Complete mission record graph produced by the pure mapper.
    * @param schema Canonical constructor family selected from the source schema.
+   * @param options Optional verified source identities to preserve on recreation.
    * @returns Manifest required to verify the independently reopened output.
    */
   write(
@@ -339,6 +359,7 @@ export class WebIfcMissionWriter {
     sourceModelId: string,
     graph: IfcRobotMissionRecordGraph,
     schema: SupportedMissionIfcSchema,
+    options: IfcMissionWriterOptions = {},
   ): IfcMissionWriteManifest {
     this.preflightGraph(graph);
     const recordsById = new Map<string, IfcRobotTaskRecord>();
@@ -367,8 +388,56 @@ export class WebIfcMissionWriter {
     const globalIds = new Map<string, unknown>();
     const globalIdStrings = new Set<string>();
 
+    for (const [recordId, preserved] of options.preservedGlobalIds ?? []) {
+      const record = recordsById.get(recordId);
+      if (!record) {
+        throw new IfcModelExportError(
+          `Preserved GlobalId refers to unknown mission record ${recordId}.`,
+        );
+      }
+      if (!ROOT_RECORD_ENTITIES.has(record.entity)) {
+        throw new IfcModelExportError(
+          `Mission record ${recordId} is not an IfcRoot and cannot preserve a GlobalId.`,
+        );
+      }
+      const preservedGlobalId = preserved.globalId.trim();
+      if (!preservedGlobalId || preservedGlobalId !== preserved.globalId) {
+        throw new IfcModelExportError(
+          `Preserved GlobalId for ${recordId} must be a non-empty canonical IFC value.`,
+        );
+      }
+      if (
+        !Number.isInteger(preserved.expressId) ||
+        preserved.expressId <= 0 ||
+        sourceGuidExpressIds.get(preservedGlobalId) !== preserved.expressId
+      ) {
+        throw new IfcModelExportError(
+          `Preserved GlobalId ${preservedGlobalId} for ${recordId} does not resolve to source entity #${preserved.expressId}.`,
+        );
+      }
+      if (
+        api.GetLineType(modelId, preserved.expressId) !==
+        RECORD_TYPE_CODES[record.entity]
+      ) {
+        throw new IfcModelExportError(
+          `Preserved GlobalId ${preservedGlobalId} for ${recordId} belongs to an incompatible source entity type.`,
+        );
+      }
+      if (globalIdStrings.has(preservedGlobalId)) {
+        throw new IfcModelExportError(
+          `Preserved GlobalId ${preservedGlobalId} is claimed by more than one mission record.`,
+        );
+      }
+      globalIdStrings.add(preservedGlobalId);
+      globalIds.set(
+        recordId,
+        api.CreateIfcType(modelId, IFCGLOBALLYUNIQUEID, preservedGlobalId),
+      );
+    }
+
     for (const record of graph.records) {
       if (!ROOT_RECORD_ENTITIES.has(record.entity)) continue;
+      if (globalIds.has(record.id)) continue;
       const globalId = api.CreateIFCGloballyUniqueId(modelId);
       const value = String(wrappedValue(globalId) ?? "");
       const existingExpressId = value
@@ -627,6 +696,11 @@ export class WebIfcMissionWriter {
           break;
         case "IfcRelSequence":
           assertEquivalent(
+            wrappedValue(line.Name),
+            record.sourceId,
+            `${record.id}.Name`,
+          );
+          assertEquivalent(
             handleValue(line.RelatingProcess),
             expressIdFor(record.relatingProcess),
             `${record.id}.RelatingProcess`,
@@ -848,7 +922,10 @@ export class WebIfcMissionWriter {
           }
           break;
         case "IfcRelNests":
+          break;
         case "IfcRelSequence":
+          validBoundedString(record.sourceId, `${record.id}.Name`);
+          break;
         case "IfcRelAssignsToProcess":
         case "IfcRelAssignsToProduct":
         case "IfcRelAssignsToControl":
@@ -1198,7 +1275,7 @@ export class WebIfcMissionWriter {
         return new schema.IfcRelSequence(
           globalId(),
           ownerHistory,
-          null,
+          label(record.sourceId),
           null,
           internal(record.relatingProcess),
           internal(record.relatedProcess),

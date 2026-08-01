@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  IFCGLOBALLYUNIQUEID,
   IFCOBJECTDEFINITION,
   IFCOWNERHISTORY,
   IFCPRODUCT,
   IFCPROJECT,
+  IFCRELSEQUENCE,
+  IFCROOT,
+  IFCTASK,
   IFCTASKTIME,
   IFCTYPEPRODUCT,
 } from "web-ifc";
@@ -46,6 +50,9 @@ interface FakeWriterApiOptions {
 
   /** Type-product IDs accepted by IfcRelAssignsToProduct. */
   typeProductIds?: readonly number[];
+
+  /** Numeric entity types of existing source lines used for identity checks. */
+  sourceLineTypes?: Readonly<Record<number, number>>;
 }
 
 /**
@@ -95,6 +102,11 @@ class FakeWriterApi implements IfcMissionWriterApiPort {
     if (type === IFCTYPEPRODUCT) {
       return fakeIdVector(this.options.typeProductIds ?? []);
     }
+    if (type === IFCROOT) {
+      return fakeIdVector([
+        ...new Set(Object.values(this.options.guidExpressIds ?? {})),
+      ]);
+    }
     if (type === IFCPROJECT || type === IFCOWNERHISTORY) {
       return fakeIdVector([]);
     }
@@ -102,13 +114,16 @@ class FakeWriterApi implements IfcMissionWriterApiPort {
   }
 
   /** No existing parsed line is needed by these focused write tests. */
-  GetLine(): unknown {
-    return undefined;
+  GetLine(_modelID: number, expressID: number): unknown {
+    const globalId = Object.entries(this.options.guidExpressIds ?? {}).find(
+      ([, candidateExpressId]) => candidateExpressId === expressID,
+    )?.[0];
+    return globalId ? { GlobalId: { value: globalId } } : undefined;
   }
 
-  /** Verification is outside this fake's focused preflight responsibility. */
-  GetLineType(): number {
-    return 0;
+  /** Returns configured existing-line types for preserved identity checks. */
+  GetLineType(_modelID: number, expressID: number): number {
+    return this.options.sourceLineTypes?.[expressID] ?? 0;
   }
 
   /** Leaves ample source-ID space before deterministic generated records. */
@@ -125,6 +140,11 @@ class FakeWriterApi implements IfcMissionWriterApiPort {
   CreateIFCGloballyUniqueId(): unknown {
     this.generatedGuid += 1;
     return `generated-guid-${this.generatedGuid}`;
+  }
+
+  /** Wraps a supplied primitive exactly like web-ifc's typed-value factory. */
+  CreateIfcType(_modelID: number, type: number, entry: unknown): unknown {
+    return { type, value: entry };
   }
 
   /** Records each mutation so atomic preflight behavior can be asserted. */
@@ -207,6 +227,142 @@ test("schema adapter rejects IFC2X3", () => {
       error instanceof IfcModelExportError &&
       /supports IFC4 and IFC4X3 only/i.test(error.message),
   );
+});
+
+/** Existing application-owned roots retain their source GlobalId on recreation. */
+test("writer preserves a supplied GlobalId after verifying its source identity", () => {
+  const preservedGlobalId = "1JYq5jWRT1jBq_L0X1v2w3";
+  const sourceExpressId = 77;
+  const api = new FakeWriterApi({
+    guidExpressIds: { [preservedGlobalId]: sourceExpressId },
+    sourceLineTypes: { [sourceExpressId]: IFCTASK },
+  });
+  const graph: IfcRobotMissionRecordGraph = {
+    missionId: "mission",
+    rootTask: taskReference,
+    records: [taskRecord],
+  };
+
+  const manifest = new WebIfcMissionWriter().write(
+    api,
+    7,
+    sourceModelId,
+    graph,
+    "IFC4",
+    {
+      preservedGlobalIds: new Map([
+        [
+          taskRecord.id,
+          { globalId: preservedGlobalId, expressId: sourceExpressId },
+        ],
+      ]),
+    },
+  );
+
+  const writtenTask = api.writtenLines.find((line) => line.type === IFCTASK) as
+    | { GlobalId?: { type?: number; value?: string } }
+    | undefined;
+  assert.deepEqual(writtenTask?.GlobalId, {
+    type: IFCGLOBALLYUNIQUEID,
+    value: preservedGlobalId,
+  });
+  assert.equal(manifest.entries[0].globalId, preservedGlobalId);
+});
+
+/** A provenance claim must resolve to its exact existing source line. */
+test("writer rejects a preserved GlobalId with a mismatched source express ID", () => {
+  const preservedGlobalId = "1JYq5jWRT1jBq_L0X1v2w3";
+  const api = new FakeWriterApi({
+    guidExpressIds: { [preservedGlobalId]: 77 },
+    sourceLineTypes: { 77: IFCTASK },
+  });
+  const graph: IfcRobotMissionRecordGraph = {
+    missionId: "mission",
+    rootTask: taskReference,
+    records: [taskRecord],
+  };
+
+  assert.throws(
+    () =>
+      new WebIfcMissionWriter().write(api, 7, sourceModelId, graph, "IFC4", {
+        preservedGlobalIds: new Map([
+          [taskRecord.id, { globalId: preservedGlobalId, expressId: 78 }],
+        ]),
+      }),
+    /does not resolve to source entity #78/i,
+  );
+  assert.equal(api.writtenLines.length, 0);
+});
+
+/** One persistent IFC identity cannot be claimed by two graph records. */
+test("writer rejects duplicate preserved GlobalId claims", () => {
+  const preservedGlobalId = "1JYq5jWRT1jBq_L0X1v2w3";
+  const sourceExpressId = 77;
+  const secondTask = {
+    ...taskRecord,
+    id: "second-task",
+    sourceId: "second-domain-task",
+    identification: "second-domain-task",
+  };
+  const api = new FakeWriterApi({
+    guidExpressIds: { [preservedGlobalId]: sourceExpressId },
+    sourceLineTypes: { [sourceExpressId]: IFCTASK },
+  });
+  const graph: IfcRobotMissionRecordGraph = {
+    missionId: "mission",
+    rootTask: taskReference,
+    records: [taskRecord, secondTask],
+  };
+  const preserved = {
+    globalId: preservedGlobalId,
+    expressId: sourceExpressId,
+  };
+
+  assert.throws(
+    () =>
+      new WebIfcMissionWriter().write(api, 7, sourceModelId, graph, "IFC4", {
+        preservedGlobalIds: new Map([
+          [taskRecord.id, preserved],
+          [secondTask.id, preserved],
+        ]),
+      }),
+    /claimed by more than one mission record/i,
+  );
+  assert.equal(api.writtenLines.length, 0);
+});
+
+/** The stable domain sequence ID is serialized in IfcRelSequence.Name. */
+test("writer stores the domain sequence ID in IfcRelSequence.Name", () => {
+  const successorReference = { entity: "IfcTask", id: "successor" } as const;
+  const graph: IfcRobotMissionRecordGraph = {
+    missionId: "mission",
+    rootTask: taskReference,
+    records: [
+      taskRecord,
+      {
+        ...taskRecord,
+        id: successorReference.id,
+        sourceId: "successor-domain-task",
+        identification: "successor-domain-task",
+      },
+      {
+        entity: "IfcRelSequence",
+        id: "sequence-relation",
+        sourceId: "domain-sequence-id",
+        relatingProcess: taskReference,
+        relatedProcess: successorReference,
+        sequenceType: "START_START",
+      },
+    ],
+  };
+  const api = new FakeWriterApi();
+
+  new WebIfcMissionWriter().write(api, 7, sourceModelId, graph, "IFC4X3");
+
+  const sequence = api.writtenLines.find(
+    (line) => line.type === IFCRELSEQUENCE,
+  ) as { Name?: { value?: string } } | undefined;
+  assert.equal(sequence?.Name?.value, "domain-sequence-id");
 });
 
 /** A GlobalId can resolve an object even when it came from another runtime model. */

@@ -23,6 +23,7 @@ import {
   type RobotTaskStatus,
   type RobotTaskTime,
 } from "../../domain/robot-tasks";
+import { ROBOT_MISSION_ANNOTATION_SCHEMA_VERSION } from "../robot-tasks";
 import type {
   IfcMissionEntityProvenance,
   IfcMissionImportIssue,
@@ -88,6 +89,12 @@ const referenceIds = (value: any): number[] =>
   Array.isArray(value)
     ? value.map(referenceId).filter((id): id is number => id !== undefined)
     : [];
+
+/** True only when an IFC aggregate contains one valid reference to the owner. */
+const referencesExactly = (value: any, expectedExpressId: number): boolean =>
+  Array.isArray(value) &&
+  value.length === 1 &&
+  referenceId(value[0]) === expectedExpressId;
 
 const textValue = (value: any): string | undefined => {
   const candidate = optional(value);
@@ -286,6 +293,18 @@ class MissionReadContext {
         taskId: ownerId,
       });
       if (textValue(propertySet.Name) !== name) continue;
+      if (!referencesExactly(relation.line.RelatedObjects, ownerExpressId)) {
+        fail(
+          "IFC_PROPERTY_RELATION_SCOPE_INVALID",
+          `${name} must be assigned only to its intended owner ${ownerId}.`,
+          {
+            missionId,
+            taskId: name === "RobotMission" ? undefined : ownerId,
+            expressId: relation.expressId,
+            ifcEntityType: "IFCRELDEFINESBYPROPERTIES",
+          },
+        );
+      }
       result.push({ expressId: propertySetId, line: propertySet, relation });
     }
     return result;
@@ -565,6 +584,75 @@ const optionalStringList = (
   return value as string[];
 };
 
+interface RobotMissionAnnotationMetadata {
+  legacy: boolean;
+  hasExplicitSchedule?: boolean;
+}
+
+/** Validates the infrastructure schema marker before interpreting newer fields. */
+const annotationMetadata = (
+  values: Map<string, unknown>,
+  context: MissionReadContext,
+  missionContext: Partial<IfcMissionImportIssue>,
+): RobotMissionAnnotationMetadata => {
+  const rawVersion = values.get("AnnotationSchemaVersion");
+  const rawScheduleMarker = values.get("HasExplicitSchedule");
+  const currentMajor = Number(
+    ROBOT_MISSION_ANNOTATION_SCHEMA_VERSION.split(".")[0],
+  );
+  let legacy = false;
+
+  if (rawVersion === undefined) {
+    legacy = true;
+    context.issues.push(
+      issue(
+        "IFC_ANNOTATION_SCHEMA_VERSION_LEGACY",
+        "warning",
+        "compatibility",
+        "RobotMission has no AnnotationSchemaVersion and is interpreted using the pre-version compatibility rules.",
+        missionContext,
+      ),
+    );
+  } else if (
+    typeof rawVersion !== "string" ||
+    !/^\d+\.\d+\.\d+$/.test(rawVersion)
+  ) {
+    fail(
+      "IFC_ANNOTATION_SCHEMA_VERSION_INVALID",
+      "RobotMission.AnnotationSchemaVersion must be a semantic version such as 1.0.0.",
+      missionContext,
+    );
+  } else {
+    const importedMajor = Number(rawVersion.split(".")[0]);
+    if (importedMajor !== currentMajor) {
+      fail(
+        "IFC_ANNOTATION_SCHEMA_VERSION_UNSUPPORTED",
+        `Annotation schema version ${rawVersion} is not supported by major version ${currentMajor}.`,
+        missionContext,
+      );
+    }
+  }
+
+  if (rawScheduleMarker === undefined) {
+    if (!legacy) {
+      fail(
+        "IFC_EXPLICIT_SCHEDULE_MARKER_MISSING",
+        "Versioned RobotMission metadata requires HasExplicitSchedule.",
+        missionContext,
+      );
+    }
+    return { legacy };
+  }
+  if (typeof rawScheduleMarker !== "boolean") {
+    fail(
+      "IFC_EXPLICIT_SCHEDULE_MARKER_INVALID",
+      "RobotMission.HasExplicitSchedule must be a boolean.",
+      missionContext,
+    );
+  }
+  return { legacy, hasExplicitSchedule: rawScheduleMarker as boolean };
+};
+
 const taskTime = (
   context: MissionReadContext,
   taskLine: IfcLine,
@@ -764,6 +852,18 @@ const reconstructAssignments = (
     entry: IndexedLine;
   }> = [];
   for (const entry of productRelations) {
+    if (!referencesExactly(entry.line.RelatedObjects, taskExpressId)) {
+      fail(
+        "IFC_MOVE_DESTINATION_SCOPE_INVALID",
+        `MOVE_TO for task ${taskId} must reference only that task.`,
+        {
+          missionId,
+          taskId,
+          expressId: entry.expressId,
+          ifcEntityType: "IFCRELASSIGNSTOPRODUCT",
+        },
+      );
+    }
     if (textValue(entry.line.Name) !== "MOVE_TO" || actionType !== "MOVE") {
       fail(
         "IFC_MOVE_DESTINATION_CONTRADICTORY",
@@ -990,25 +1090,25 @@ const reconstructSequences = (
         },
       );
     }
-    const sequenceId = encodedId(
-      "sequence",
-      predecessor!.id,
-      successor!.id,
-      rawType,
-    );
-    context.issues.push(
-      issue(
-        "IFC_SEQUENCE_ID_COMPATIBILITY_FALLBACK",
-        "warning",
-        "compatibility",
-        `IfcRelSequence #${entry.expressId} has no project-owned sequence ID; ${sequenceId} was derived deterministically.`,
-        {
-          missionId,
-          expressId: entry.expressId,
-          ifcEntityType: "IFCRELSEQUENCE",
-        },
-      ),
-    );
+    const explicitSequenceId = textValue(entry.line.Name)?.trim();
+    const sequenceId =
+      explicitSequenceId ??
+      encodedId("sequence", predecessor!.id, successor!.id, rawType);
+    if (!explicitSequenceId) {
+      context.issues.push(
+        issue(
+          "IFC_SEQUENCE_ID_COMPATIBILITY_FALLBACK",
+          "warning",
+          "compatibility",
+          `IfcRelSequence #${entry.expressId} has no project-owned sequence ID; ${sequenceId} was derived deterministically.`,
+          {
+            missionId,
+            expressId: entry.expressId,
+            ifcEntityType: "IFCRELSEQUENCE",
+          },
+        ),
+      );
+    }
     context.addProvenance(
       missionId,
       entry.expressId,
@@ -1030,11 +1130,21 @@ const reconstructSchedule = (
   context: MissionReadContext,
   missionExpressId: number,
   missionId: string,
+  annotation: RobotMissionAnnotationMetadata,
 ): RobotMissionSchedule | undefined => {
   const relations = context.indexes.controlAssignments.filter((entry) =>
     referenceIds(entry.line.RelatedObjects).includes(missionExpressId),
   );
-  if (!relations.length) return undefined;
+  if (!relations.length) {
+    if (annotation.hasExplicitSchedule !== undefined) {
+      fail(
+        "IFC_SCHEDULE_INFRASTRUCTURE_MISSING",
+        `Versioned mission ${missionId} requires generated IfcWorkSchedule infrastructure.`,
+        { missionId, expressId: missionExpressId, ifcEntityType: "IFCTASK" },
+      );
+    }
+    return undefined;
+  }
   if (relations.length > 1) {
     fail(
       "IFC_SCHEDULE_AMBIGUOUS",
@@ -1047,6 +1157,17 @@ const reconstructSchedule = (
     );
   }
   const relation = relations[0];
+  if (!referencesExactly(relation.line.RelatedObjects, missionExpressId)) {
+    fail(
+      "IFC_SCHEDULE_RELATION_SCOPE_INVALID",
+      `Mission schedule relation for ${missionId} must reference only that mission.`,
+      {
+        missionId,
+        expressId: relation.expressId,
+        ifcEntityType: "IFCRELASSIGNSTOCONTROL",
+      },
+    );
+  }
   const scheduleExpressId = referenceId(relation.line.RelatingControl);
   if (scheduleExpressId === undefined) {
     fail(
@@ -1097,20 +1218,7 @@ const reconstructSchedule = (
     encodedId("relation", "schedule", missionId),
     relation.line,
   );
-  context.issues.push(
-    issue(
-      "IFC_SCHEDULE_AUTHORED_STATE_UNKNOWN",
-      "warning",
-      "compatibility",
-      "This IFC predates the explicit schedule marker; generated fallback and explicitly authored schedules cannot be distinguished.",
-      {
-        missionId,
-        expressId: scheduleExpressId,
-        ifcEntityType: "IFCWORKSCHEDULE",
-      },
-    ),
-  );
-  return {
+  const reconstructed: RobotMissionSchedule = {
     id: scheduleId,
     name: requireText(
       schedule.Name,
@@ -1126,6 +1234,23 @@ const reconstructSchedule = (
     scheduleFinish: textValue(schedule.FinishTime),
     scheduleDuration: textValue(schedule.Duration),
   };
+  if (annotation.hasExplicitSchedule === false) return undefined;
+  if (annotation.hasExplicitSchedule === undefined) {
+    context.issues.push(
+      issue(
+        "IFC_SCHEDULE_AUTHORED_STATE_UNKNOWN",
+        "warning",
+        "compatibility",
+        "This IFC predates the explicit schedule marker; generated fallback and explicitly authored schedules cannot be distinguished.",
+        {
+          missionId,
+          expressId: scheduleExpressId,
+          ifcEntityType: "IFCWORKSCHEDULE",
+        },
+      ),
+    );
+  }
+  return reconstructed;
 };
 
 const reconstructMission = (
@@ -1175,6 +1300,7 @@ const reconstructMission = (
     missionId,
     missionId,
   );
+  const annotation = annotationMetadata(metadata, context, missionContext);
   const nests = context.indexes.nests.filter(
     (entry) => referenceId(entry.line.RelatingObject) === missionExpressId,
   );
@@ -1266,7 +1392,12 @@ const reconstructMission = (
     priority: priority(line.Priority, missionContext),
     tasks,
     sequences: reconstructSequences(context, missionId, tasksByExpressId),
-    schedule: reconstructSchedule(context, missionExpressId, missionId),
+    schedule: reconstructSchedule(
+      context,
+      missionExpressId,
+      missionId,
+      annotation,
+    ),
     createdAt: requireText(
       metadata.get("CreatedAt"),
       "IFC_MISSION_CREATED_AT_MISSING",

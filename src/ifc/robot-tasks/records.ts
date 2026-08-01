@@ -157,6 +157,9 @@ export interface IfcRelNestsRecord extends IfcRecordBase<"IfcRelNests"> {
 
 /** Internal representation of one directed temporal task dependency. */
 export interface IfcRelSequenceRecord extends IfcRecordBase<"IfcRelSequence"> {
+  /** Stable domain sequence ID written to IfcRelSequence.Name. */
+  sourceId: string;
+
   /** Predecessor process. */
   relatingProcess: IfcRecordReference<"IfcTask">;
 

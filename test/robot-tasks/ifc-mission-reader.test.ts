@@ -15,6 +15,7 @@ import {
   type IfcMissionReaderApiPort,
   type IfcMissionReaderIdVectorPort,
 } from "../../src/ifc/model-import";
+import { ROBOT_MISSION_ANNOTATION_SCHEMA_VERSION } from "../../src/ifc/robot-tasks";
 
 const value = <Value>(entry: Value): { value: Value } => ({ value: entry });
 const handle = (expressId: number): { value: number } => value(expressId);
@@ -129,6 +130,36 @@ const addPropertySet = (
     RelatedObjects: [handle(ownerId)],
     RelatingPropertyDefinition: handle(propertySetId),
   });
+};
+
+/** Appends one scalar value to an existing fake IfcPropertySet. */
+const appendScalarProperty = (
+  api: FakeReaderApi,
+  propertySetId: number,
+  name: string,
+  nominalValue: unknown,
+): void => {
+  const propertyId = Math.max(...api.lines.keys()) + 1;
+  api.add(OTHER + 1, "IFCPROPERTYSINGLEVALUE", {
+    expressID: propertyId,
+    Name: value(name),
+    NominalValue: value(nominalValue),
+  });
+  const propertySet = api.lines.get(propertySetId)!;
+  propertySet.HasProperties = [
+    ...(propertySet.HasProperties as Array<{ value: number }>),
+    handle(propertyId),
+  ];
+};
+
+/** Marks the default fixture as a versioned annotation graph. */
+const setVersionedMissionMetadata = (
+  api: FakeReaderApi,
+  hasExplicitSchedule: boolean,
+  version = ROBOT_MISSION_ANNOTATION_SCHEMA_VERSION,
+): void => {
+  appendScalarProperty(api, 60, "AnnotationSchemaVersion", version);
+  appendScalarProperty(api, 60, "HasExplicitSchedule", hasExplicitSchedule);
 };
 
 interface MissionFixture {
@@ -618,6 +649,154 @@ test("a malformed mission does not corrupt an independent valid mission", () => 
   assert.ok(
     result.issues.some(
       (entry) => entry.missionId === "mission-0" && entry.severity === "error",
+    ),
+  );
+});
+
+test("current annotation version respects explicit schedule markers", () => {
+  for (const hasExplicitSchedule of [true, false]) {
+    const api = new FakeReaderApi();
+    addMission(api);
+    setVersionedMissionMetadata(api, hasExplicitSchedule);
+
+    const result = read(api);
+    assert.equal(result.missions.length, 1, JSON.stringify(result.issues));
+    assert.equal(Boolean(result.missions[0].schedule), hasExplicitSchedule);
+    assert.ok(
+      !result.issues.some(
+        (entry) =>
+          entry.code === "IFC_ANNOTATION_SCHEMA_VERSION_LEGACY" ||
+          entry.code === "IFC_SCHEDULE_AUTHORED_STATE_UNKNOWN",
+      ),
+    );
+  }
+});
+
+test("invalid and future annotation schema versions block their mission", () => {
+  const currentMajor = Number(
+    ROBOT_MISSION_ANNOTATION_SCHEMA_VERSION.split(".")[0],
+  );
+  for (const [version, expectedCode] of [
+    ["not-a-version", "IFC_ANNOTATION_SCHEMA_VERSION_INVALID"],
+    [`${currentMajor + 1}.0.0`, "IFC_ANNOTATION_SCHEMA_VERSION_UNSUPPORTED"],
+  ] as const) {
+    const api = new FakeReaderApi();
+    addMission(api);
+    setVersionedMissionMetadata(api, true, version);
+
+    const result = read(api);
+    assert.equal(result.missions.length, 0);
+    assert.ok(result.issues.some((entry) => entry.code === expectedCode));
+  }
+});
+
+test("explicit sequence Name preserves the domain ID without fallback warning", () => {
+  const api = new FakeReaderApi();
+  addMission(api);
+  setVersionedMissionMetadata(api, true);
+  api.lines.get(170)!.Name = value("domain-sequence-id");
+
+  const result = read(api);
+  assert.equal(result.missions[0].sequences[0].id, "domain-sequence-id");
+  assert.ok(
+    !result.issues.some(
+      (entry) => entry.code === "IFC_SEQUENCE_ID_COMPATIBILITY_FALLBACK",
+    ),
+  );
+  assert.ok(
+    result.provenance.entities.some(
+      (entry) =>
+        entry.recordIdentity === "relation/sequence/domain-sequence-id",
+    ),
+  );
+});
+
+test("legacy fallback IDs can be read again after normalized markers are added", () => {
+  const api = new FakeReaderApi();
+  addMission(api);
+
+  const legacy = read(api);
+  const fallbackId = "sequence/task-a-0/task-b-0/FINISH_START";
+  assert.equal(legacy.missions[0].sequences[0].id, fallbackId);
+  for (const code of [
+    "IFC_ANNOTATION_SCHEMA_VERSION_LEGACY",
+    "IFC_SEQUENCE_ID_COMPATIBILITY_FALLBACK",
+    "IFC_SCHEDULE_AUTHORED_STATE_UNKNOWN",
+  ]) {
+    assert.ok(legacy.issues.some((entry) => entry.code === code));
+  }
+
+  setVersionedMissionMetadata(api, true);
+  api.lines.get(170)!.Name = value(fallbackId);
+  const normalized = read(api);
+  assert.equal(normalized.missions[0].sequences[0].id, fallbackId);
+  assert.ok(
+    !normalized.issues.some((entry) => entry.kind === "compatibility"),
+    JSON.stringify(normalized.issues),
+  );
+});
+
+test("recognized property sets cannot be shared with another owner", () => {
+  const api = new FakeReaderApi();
+  const fixture = addMission(api);
+  api.lines.get(70)!.RelatedObjects = [
+    handle(fixture.missionExpressId),
+    handle(fixture.taskExpressIds[0]),
+  ];
+
+  const result = read(api);
+  assert.equal(result.missions.length, 0);
+  assert.ok(
+    result.issues.some(
+      (entry) => entry.code === "IFC_PROPERTY_RELATION_SCOPE_INVALID",
+    ),
+  );
+});
+
+test("MOVE_TO cannot assign an additional task", () => {
+  const api = new FakeReaderApi();
+  const fixture = addMission(api);
+  const actionPropertyId = (
+    api.lines.get(80)!.HasProperties as Array<{ value: number }>
+  )[0].value;
+  (api.lines.get(actionPropertyId)!.NominalValue as { value: string }).value =
+    "MOVE";
+  api.lines.get(160)!.Name = value("OPERATES_ON");
+  api.add(IFCRELASSIGNSTOPROCESS, "IFCRELASSIGNSTOPROCESS", {
+    expressID: 200,
+    Name: value("MOVE_FROM"),
+    RelatingProcess: handle(fixture.taskExpressIds[0]),
+    RelatedObjects: [handle(30)],
+  });
+  api.add(IFCRELASSIGNSTOPRODUCT, "IFCRELASSIGNSTOPRODUCT", {
+    expressID: 201,
+    Name: value("MOVE_TO"),
+    RelatedObjects: fixture.taskExpressIds.map(handle),
+    RelatingProduct: handle(30),
+  });
+
+  const result = read(api);
+  assert.equal(result.missions.length, 0);
+  assert.ok(
+    result.issues.some(
+      (entry) => entry.code === "IFC_MOVE_DESTINATION_SCOPE_INVALID",
+    ),
+  );
+});
+
+test("schedule control relation cannot include another task", () => {
+  const api = new FakeReaderApi();
+  const fixture = addMission(api);
+  api.lines.get(190)!.RelatedObjects = [
+    handle(fixture.missionExpressId),
+    handle(fixture.taskExpressIds[0]),
+  ];
+
+  const result = read(api);
+  assert.equal(result.missions.length, 0);
+  assert.ok(
+    result.issues.some(
+      (entry) => entry.code === "IFC_SCHEDULE_RELATION_SCOPE_INVALID",
     ),
   );
 });

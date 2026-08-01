@@ -320,7 +320,7 @@ flowchart TD
 | Mission                  | Parent `IfcTask`, `ObjectType = RobotMission`           |
 | Executable step          | Child `IfcTask`, `ObjectType = RobotTask`               |
 | Mission hierarchy        | `IfcRelNests`                                           |
-| Task dependency          | `IfcRelSequence`                                        |
+| Task dependency          | `IfcRelSequence`, domain ID in `Name`                   |
 | Task timing              | Direct `IfcTask.TaskTime → IfcTaskTime`                 |
 | Mission plan             | `IfcWorkSchedule` + `IfcRelAssignsToControl`            |
 | Direct interaction       | `IfcRelAssignsToProcess`, usually `OPERATES_ON`         |
@@ -334,28 +334,32 @@ flowchart TD
 
 `RobotAction` contains `ActionType` and optional values such as `TargetState`, `RequiredCapability`, `Preconditions`, `Postconditions`, and `SuccessCondition`. The custom property-set names intentionally do not use the reserved `Pset_` prefix.
 
-Status is written to `IfcTask.Status`; domain priorities map from `low`, `medium`, `high`, and `critical` to IFC integer priorities `1` through `4`. `RobotTask` preserves task creation/update times plus optional camera and marker coordinates, while `RobotMission` preserves mission creation/update times. A work schedule is generated for every mission; when explicit schedule metadata is absent, its identity/name and start time are derived from the mission.
+Status is written to `IfcTask.Status`; domain priorities map from `low`, `medium`, `high`, and `critical` to IFC integer priorities `1` through `4`. `RobotTask` preserves task creation/update times plus optional camera and marker coordinates, while `RobotMission` preserves mission creation/update times. The mission-owned `RobotMission` property set also stores `AnnotationSchemaVersion = "1.0.0"` and `HasExplicitSchedule = true | false`. A work schedule remains structural infrastructure for every mission; when `HasExplicitSchedule` is false, import does not expose that generated fallback as an authored domain schedule.
 
-New `IfcRoot` entities receive new IFC GlobalIds. Existing target objects are resolved against the selected source IFC by `GlobalId`, with a source-model-scoped `expressId` fallback. References that are missing, ambiguous, or incompatible with the required IFC select type stop the export.
+Existing target objects are resolved against the selected source IFC by `GlobalId`, with a source-model-scoped `expressId` fallback. References that are missing, ambiguous, or incompatible with the required IFC select type stop the export. Recognized records representing the same deterministic domain concept retain their existing IFC GlobalId when recreated. New concepts receive new GlobalIds, while every recreated record receives a fresh serialization-local express ID. Existing building-object GlobalIds are never replaced by this annotation operation.
 
 ## IFC export pipeline
 
 ```mermaid
 flowchart LR
   A[Direct IFC import] --> B[Retained source IFC bytes]
-  A --> C[IFC-to-Fragments conversion]
-  C --> D[Browser rendering and selection]
-  D --> E[RobotMission domain objects]
-  E --> F[Pure IFC record mapper]
-  B --> G[web-ifc mission writer]
-  F --> G
+  B --> C[Detect owned graphs and provenance]
+  D[Current RobotMission collection] --> E[Pure IFC record mapper]
+  C --> F[Preflight complete replacement]
+  E --> F
+  F --> G[Delete and recreate only owned graph]
   G --> H[Save IFC STEP]
   H --> I[Fresh web-ifc instance reopens output]
-  I --> J[Verify schema, entities, relations, values, and GlobalIds]
-  J --> K[Browser download]
+  I --> J[Structural verification and mission reimport]
+  J --> K[Semantic comparison]
+  K --> L[Browser download]
 ```
 
 The exporter currently supports `IFC4`, `IFC4X3`, `IFC4X3_ADD1`, and `IFC4X3_ADD2`. `IFC2X3` is rejected because the mission writer does not perform a schema conversion.
+
+Export is a full replacement of the recognized application-owned annotation graph, not an append operation. The supplied mission collection is authoritative for the selected IFC: matching mission IDs are updated, new IDs are added, and an imported owned mission omitted from the collection is removed. Passing an empty collection removes every recognized project-owned mission. Repeated import/export cycles therefore do not accumulate duplicate tasks, schedules, property sets, or relations.
+
+The replacement boundary is deliberately narrow. Only entities identified by the importer as belonging to a complete `RobotMission` graph and associated with deterministic provenance may be removed. Building entities, building-object GlobalIds, unrelated `IfcTask`/`IfcWorkSchedule` process plans, unrelated property sets, unrelated relations, the source header, and the source schema remain outside that ownership boundary.
 
 Export safety rules:
 
@@ -363,9 +367,16 @@ Export safety rules:
 - arbitrary `.frag` files are view-only for IFC export purposes;
 - structural Fragments edits mark the source-backed model as unsafe to export;
 - every current mission must pass domain validation;
+- duplicate mission, task, deterministic record, provenance, or preserved GlobalId claims stop replacement;
 - every referenced object must resolve in the selected source IFC;
-- the saved output must reopen with the same schema;
-- every generated mission entity and relationship is verified after reopening.
+- before deletion, every IFC line is inspected for incoming references to the owned deletion set;
+- an unknown external relation or unsupported external property set referencing an owned entity blocks export;
+- a new object assignment cannot treat an owned entity scheduled for replacement as an external target;
+- all ownership, identity, reference, GlobalId, and replacement-line checks finish before the first `DeleteLine` call;
+- replacement runs in an isolated `web-ifc` model, so a failure returns no partial output and leaves the retained source bytes unchanged;
+- the fresh-runtime pass confirms that every obsolete express ID is actually absent;
+- the saved output must reopen with the same schema and contain exactly one owned graph per current mission ID;
+- every generated entity and relation is verified, missions are reimported, and export fails if semantic comparison differs from the intended aggregates.
 
 ## Read-only IFC mission import
 
@@ -394,14 +405,19 @@ interface IfcMissionImportResult {
 }
 ```
 
-Provenance remains outside the domain. For recognized application-owned entities it retains mission ownership, entity type, express ID, optional IFC GlobalId, owning mission/task ID, and a deterministic graph-record identity where the current mapping makes one derivable. The runtime `modelId` scopes every imported local express ID.
+Provenance remains outside the domain. For recognized application-owned entities it retains mission ownership, entity type, express ID, optional IFC GlobalId, owning mission/task ID, and a deterministic graph-record identity where the current mapping makes one derivable. Replacement joins this identity with newly mapped records to preserve GlobalIds without treating express IDs as persistent identity. The runtime `modelId` scopes every imported local express ID.
 
-Two compatibility warnings are expected for files written before the next export revision:
+Current exports use annotation schema `1.0.0`. A sequence stores its stable domain ID in `IfcRelSequence.Name`; `HasExplicitSchedule` distinguishes authored schedule data from the always-generated `IfcWorkSchedule` infrastructure. Import accepts compatible version `1.x` annotations, rejects malformed values and unsupported major versions, and requires the explicit schedule marker on versioned graphs.
 
-- `IfcRelSequence` does not yet store the domain sequence ID. Import derives a deterministic `sequence/<predecessor>/<successor>/<type>` ID.
-- the exporter currently creates a work schedule even when no explicit domain schedule existed. Import reconstructs the available schedule but cannot distinguish generated fallback data from authored data.
+Pre-version files remain readable through documented compatibility behavior:
 
-The UI does not invoke this importer yet. The application-level `importRobotMissions(repository, missions)` operation can upsert reconstructed aggregates while preserving imported timestamps and unrelated repository entries, but it is intentionally not connected to `models.ts` in this implementation run.
+- without `AnnotationSchemaVersion`, import emits a legacy warning;
+- without `IfcRelSequence.Name`, import derives `sequence/<predecessor>/<successor>/<type>` and warns;
+- without `HasExplicitSchedule`, import reconstructs the available schedule but warns that authored and generated fallback states cannot be distinguished.
+
+The next successful export writes schema version `1.0.0`, writes the derived compatibility sequence ID explicitly, and writes the schedule marker. Reimporting that normalized file no longer produces those legacy compatibility warnings.
+
+Run 2 uses the importer internally for safe replacement and post-write verification, but browser model-loading does not yet import missions into the application repository. Connecting direct IFC loading, repository import, source association, and UI feedback remains the explicit Run-3 integration step. The existing application-level `importRobotMissions(repository, missions)` operation is the intended bulk-upsert boundary.
 
 ## Storage concept
 
@@ -674,7 +690,7 @@ npm run build
 npx eslint src test --ext .ts
 ```
 
-The integration tests exercise real `web-ifc` output for IFC4, IFC4X3, IFC4X3 addenda, task timing, property sets, object assignments, relationships, and multiple missions in one export.
+The integration tests exercise real `web-ifc` output for IFC4, IFC4X3, IFC4X3 addenda, task timing, property sets, object assignments, identity-preserving replacement, repeated roundtrips, mission removal, and multiple missions in one export.
 
 ## Current limitations and planned extensions
 
@@ -682,9 +698,8 @@ The integration tests exercise real `web-ifc` output for IFC4, IFC4X3, IFC4X3 ad
 - `.frag` files without a retained IFC source cannot be exported to IFC.
 - Structural Fragments changes cannot yet be mapped safely back to IFC.
 - IFC2X3 mission writing is unsupported.
-- Imported pre-run-2 files use deterministic compatibility sequence IDs because explicit sequence IDs are not yet written.
-- Imported pre-run-2 schedules cannot be classified reliably as authored or exporter-generated fallback schedules.
-- Read-only mission import is not connected to the model-loading UI yet; duplicate-free replacement export belongs to the next implementation run.
+- Pre-run-2 files without explicit sequence IDs or schedule markers require the documented compatibility inference on their first import; the next export normalizes them to annotation schema `1.0.0`.
+- Browser model-loading still does not import reconstructed missions or provenance into the application repository; that source-association and UI integration belongs to Run 3.
 - The PoC does not perform path planning or physical robot control.
 - Viewpoints and marker positions are supported by the domain/mapping layer but need deeper mission-editor integration.
 - Complete IFC editing, BCF workflows, authentication, and multi-user synchronization remain future work.

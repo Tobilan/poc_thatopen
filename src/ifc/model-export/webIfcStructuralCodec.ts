@@ -1,12 +1,28 @@
 import { IfcAPI } from "web-ifc";
 import type { LocateFileHandlerFn } from "web-ifc";
-import type { IfcRobotMissionRecordGraph } from "../robot-tasks";
+import {
+  compareRobotMissionsSemantically,
+  type RobotMissionSemanticDifference,
+} from "../../application/robot-tasks";
+import type { RobotMission } from "../../domain/robot-tasks";
+import {
+  mapMissionToIfcRecords,
+  type IfcRobotMissionRecordGraph,
+} from "../robot-tasks";
+import {
+  WebIfcMissionReader,
+  type IfcMissionImportResult,
+} from "../model-import";
+import { IfcMissionReplacementError } from "./ifcMissionReplacementError";
+import type { IfcMissionReplacementIssue } from "./ifcMissionReplacementError";
 import { IfcModelExportError } from "./ifcModelExportError";
 import { normalizeMissionIfcSchema } from "./ifcSchemaAdapter";
 import {
-  WebIfcMissionWriter,
-  type IfcMissionWriterApiPort,
-} from "./webIfcMissionWriter";
+  WebIfcMissionReplacer,
+  type IfcMissionReplacementApiPort,
+  type IfcMissionReplacementManifest,
+} from "./webIfcMissionReplacer";
+import { WebIfcMissionWriter } from "./webIfcMissionWriter";
 
 /** Minimal vector contract used to verify that an IFC contains STEP entities. */
 export interface IfcLineVectorPort {
@@ -82,16 +98,30 @@ export interface IfcStructuralCodec {
   rewriteAndValidate(source: Uint8Array): Promise<StructurallyValidatedIfc>;
 
   /**
-   * Writes mapped robot missions into a source IFC and independently verifies them.
+   * Replaces owned annotations from pure mapped graphs and verifies the result.
    *
-   * @param source Original retained IFC STEP bytes.
-   * @param sourceModelId Runtime model ID used by local object references.
-   * @param graphs Valid mission graphs produced by the pure IFC mapper.
-   * @returns IFC bytes containing source data and all supplied missions.
+   * This graph-level compatibility entry point is also authoritative and never
+   * appends. Application callers should prefer replaceMissionsAndValidate so
+   * the final domain-level semantic comparison is included.
    */
   writeMissionsAndValidate(
     source: Uint8Array,
     sourceModelId: string,
+    graphs: readonly IfcRobotMissionRecordGraph[],
+  ): Promise<StructurallyValidatedIfc>;
+
+  /**
+   * Replaces the complete recognized mission annotation collection atomically.
+   *
+   * `missions` is authoritative. Existing owned missions omitted from it are
+   * deleted, matching concepts retain their IFC GlobalIds, and new concepts
+   * receive new identities. Success additionally requires a fresh-runtime
+   * reimport that is semantically equivalent to this intended collection.
+   */
+  replaceMissionsAndValidate(
+    source: Uint8Array,
+    sourceModelId: string,
+    missions: readonly RobotMission[],
     graphs: readonly IfcRobotMissionRecordGraph[],
   ): Promise<StructurallyValidatedIfc>;
 }
@@ -106,6 +136,11 @@ interface ParsedIfcPass<Result = undefined> {
 
   /** Optional result produced while the temporary model was open. */
   result: Result;
+}
+
+/** Replacement output plus the independent domain reconstruction it passed. */
+interface ReimportedReplacement extends StructurallyValidatedIfc {
+  imported: IfcMissionImportResult;
 }
 
 /** Operation executed against one initialized, structurally checked model. */
@@ -164,31 +199,105 @@ export class WebIfcStructuralCodec implements IfcStructuralCodec {
   }
 
   /**
-   * Adds mapped mission records before the existing save-and-reopen validation.
+   * Replaces owned mission annotations from the supplied mapped graphs.
    *
-   * Every graph is written into the same isolated source model. The second pass
-   * verifies both STEP parseability and every generated task/relation attribute.
+   * This preserves the run-1 graph-level API while changing its mutation
+   * semantics from append-only writing to the same duplicate-free replacement
+   * used by the application export path.
    */
   async writeMissionsAndValidate(
     source: Uint8Array,
     sourceModelId: string,
     graphs: readonly IfcRobotMissionRecordGraph[],
   ): Promise<StructurallyValidatedIfc> {
-    if (!graphs.length) return this.rewriteAndValidate(source);
+    const replaced = await this.replaceGraphsAndReimport(
+      source,
+      sourceModelId,
+      graphs,
+    );
+    const expectedMissionIds = graphs
+      .map((graph) => graph.missionId)
+      .sort((left, right) => left.localeCompare(right));
+    const actualMissionIds = replaced.imported.missions
+      .map((mission) => mission.id)
+      .sort((left, right) => left.localeCompare(right));
+    if (
+      JSON.stringify(expectedMissionIds) !== JSON.stringify(actualMissionIds)
+    ) {
+      throw new IfcMissionReplacementError([
+        {
+          code: "IFC_REIMPORT_MISSION_COLLECTION_MISMATCH",
+          message: `Reimported mission IDs ${JSON.stringify(actualMissionIds)} do not match intended graph IDs ${JSON.stringify(expectedMissionIds)}.`,
+        },
+      ]);
+    }
+    return { bytes: replaced.bytes, schema: replaced.schema };
+  }
+
+  /**
+   * Replaces the complete recognized application-owned mission graph.
+   *
+   * Mutation happens only inside the first isolated web-ifc runtime. The
+   * replacer finishes all deletion-safety and identity preflight checks before
+   * its first DeleteLine call. Bytes are returned only after a second runtime
+   * has verified the written records, reimported the owned graph, and compared
+   * its domain semantics with the caller's authoritative mission collection.
+   */
+  async replaceMissionsAndValidate(
+    source: Uint8Array,
+    sourceModelId: string,
+    missions: readonly RobotMission[],
+    graphs: readonly IfcRobotMissionRecordGraph[],
+  ): Promise<StructurallyValidatedIfc> {
     if (!source.byteLength) {
       throw new IfcModelExportError("The IFC source is empty.");
     }
-    const writer = new WebIfcMissionWriter();
+    const mappedMissions = missions.map(mapMissionToIfcRecords);
+    if (JSON.stringify(mappedMissions) !== JSON.stringify(graphs)) {
+      throw new IfcModelExportError(
+        "Mission replacement graphs do not match the authoritative mission collection.",
+      );
+    }
+    const replaced = await this.replaceGraphsAndReimport(
+      source,
+      sourceModelId,
+      graphs,
+    );
+    const comparison = compareRobotMissionsSemantically(
+      missions,
+      replaced.imported.missions,
+    );
+    if (!comparison.equal) {
+      throw new IfcMissionReplacementError(
+        comparison.differences.map((difference) =>
+          this.semanticDifferenceIssue(difference),
+        ),
+      );
+    }
+    return { bytes: replaced.bytes, schema: replaced.schema };
+  }
+
+  /** Performs the shared authoritative graph replacement and fresh reimport. */
+  private async replaceGraphsAndReimport(
+    source: Uint8Array,
+    sourceModelId: string,
+    graphs: readonly IfcRobotMissionRecordGraph[],
+  ): Promise<ReimportedReplacement> {
+    if (!source.byteLength) {
+      throw new IfcModelExportError("The IFC source is empty.");
+    }
+    const replacer = new WebIfcMissionReplacer();
     const rewritten = await this.runPass(
       source,
       true,
-      (api, modelId, sourceSchema) => {
-        const schema = normalizeMissionIfcSchema(sourceSchema);
-        const writerApi = api as unknown as IfcMissionWriterApiPort;
-        return graphs.map((graph) =>
-          writer.write(writerApi, modelId, sourceModelId, graph, schema),
-        );
-      },
+      (api, modelId, sourceSchema) =>
+        replacer.replace(
+          api as unknown as IfcMissionReplacementApiPort,
+          modelId,
+          sourceModelId,
+          graphs,
+          normalizeMissionIfcSchema(sourceSchema),
+        ),
     );
     if (!rewritten.savedBytes?.byteLength) {
       throw new IfcModelExportError("web-ifc produced an empty IFC file.");
@@ -198,10 +307,18 @@ export class WebIfcStructuralCodec implements IfcStructuralCodec {
       false,
       (api, modelId, sourceSchema) => {
         normalizeMissionIfcSchema(sourceSchema);
-        const writerApi = api as unknown as IfcMissionWriterApiPort;
-        graphs.forEach((graph, index) => {
-          writer.verify(writerApi, modelId, graph, rewritten.result[index]);
-        });
+        const replacementApi = api as unknown as IfcMissionReplacementApiPort;
+        this.verifyReplacementRecords(
+          replacementApi,
+          modelId,
+          rewritten.result,
+        );
+        return new WebIfcMissionReader().read(
+          replacementApi,
+          modelId,
+          sourceModelId,
+          sourceSchema,
+        );
       },
     );
     if (verified.schema !== rewritten.schema) {
@@ -209,7 +326,73 @@ export class WebIfcStructuralCodec implements IfcStructuralCodec {
         `IFC schema changed from ${rewritten.schema} to ${verified.schema} during export.`,
       );
     }
-    return { bytes: rewritten.savedBytes, schema: verified.schema };
+    const blockingIssues = verified.result.issues.filter(
+      (entry) => entry.severity === "error" || entry.kind === "compatibility",
+    );
+    if (blockingIssues.length) {
+      throw new IfcMissionReplacementError(
+        blockingIssues.map((entry) => ({
+          code: `IFC_REIMPORT_${entry.code}`,
+          message: `Reimport after replacement: ${entry.message}`,
+          expressId: entry.expressId,
+          entityType: entry.ifcEntityType,
+          missionId: entry.missionId,
+        })),
+      );
+    }
+    return {
+      bytes: rewritten.savedBytes,
+      schema: verified.schema,
+      imported: verified.result,
+    };
+  }
+
+  /** Verifies the replacement manifest without assuming any generated graph. */
+  private verifyReplacementRecords(
+    api: IfcMissionReplacementApiPort,
+    modelId: number,
+    manifest: IfcMissionReplacementManifest,
+  ): void {
+    const lineIds = api.GetAllLines(modelId);
+    const existingExpressIds = new Set<number>();
+    for (let index = 0; index < lineIds.size(); index += 1) {
+      existingExpressIds.add(lineIds.get(index));
+    }
+    const survivingRemovedIds = manifest.removedExpressIds.filter((expressId) =>
+      existingExpressIds.has(expressId),
+    );
+    if (survivingRemovedIds.length) {
+      throw new IfcMissionReplacementError(
+        survivingRemovedIds.map((expressId) => ({
+          code: "IFC_REMOVED_ENTITY_STILL_PRESENT",
+          message: `Obsolete application-owned entity #${expressId} remains after replacement serialization.`,
+          expressId,
+        })),
+      );
+    }
+    if (!manifest.graph && !manifest.writeManifest) return;
+    if (!manifest.graph || !manifest.writeManifest) {
+      throw new IfcModelExportError(
+        "Mission replacement produced an incomplete verification manifest.",
+      );
+    }
+    new WebIfcMissionWriter().verify(
+      api,
+      modelId,
+      manifest.graph,
+      manifest.writeManifest,
+    );
+  }
+
+  /** Converts one semantic mismatch into the exporter's structured issue form. */
+  private semanticDifferenceIssue(
+    difference: RobotMissionSemanticDifference,
+  ): IfcMissionReplacementIssue {
+    return {
+      code: "IFC_REIMPORT_SEMANTIC_MISMATCH",
+      message: difference.message,
+      recordIdentity: difference.path,
+    };
   }
 
   /**

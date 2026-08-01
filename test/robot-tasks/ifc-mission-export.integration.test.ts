@@ -284,15 +284,17 @@ test("domain mission survives existing writer and new real web-ifc importer sema
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
   });
-  assert.ok(
+  assert.equal(
     imported.issues.some(
       (entry) => entry.code === "IFC_SEQUENCE_ID_COMPATIBILITY_FALLBACK",
     ),
+    false,
   );
-  assert.ok(
+  assert.equal(
     imported.issues.some(
       (entry) => entry.code === "IFC_SCHEDULE_AUTHORED_STATE_UNKNOWN",
     ),
+    false,
   );
   assert.ok(imported.provenance.entities.length > 10);
 });

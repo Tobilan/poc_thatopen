@@ -4,6 +4,7 @@ import {
   addTaskToMission,
   createRobotMission,
   createRobotTask,
+  type RobotMission,
 } from "../../src/domain/robot-tasks";
 import {
   IfcModelExportError,
@@ -32,6 +33,7 @@ class RecordingStructuralCodec implements IfcStructuralCodec {
   /** Mission-aware calls received from the export service. */
   readonly missionInputs: Array<{
     sourceModelId: string;
+    missions: readonly RobotMission[];
     graphs: readonly IfcRobotMissionRecordGraph[];
   }> = [];
 
@@ -46,11 +48,22 @@ class RecordingStructuralCodec implements IfcStructuralCodec {
   /** Records mapped mission graphs without requiring web-ifc in service tests. */
   async writeMissionsAndValidate(
     source: Uint8Array,
+    _sourceModelId: string,
+    _graphs: readonly IfcRobotMissionRecordGraph[],
+  ): Promise<StructurallyValidatedIfc> {
+    this.inputs.push(source);
+    return { bytes: rewrittenBytes, schema: "IFC4" };
+  }
+
+  /** Records the authoritative collection used by duplicate-free replacement. */
+  async replaceMissionsAndValidate(
+    source: Uint8Array,
     sourceModelId: string,
+    missions: readonly RobotMission[],
     graphs: readonly IfcRobotMissionRecordGraph[],
   ): Promise<StructurallyValidatedIfc> {
     this.inputs.push(source);
-    this.missionInputs.push({ sourceModelId, graphs });
+    this.missionInputs.push({ sourceModelId, missions, graphs });
     return { bytes: rewrittenBytes, schema: "IFC4" };
   }
 }
@@ -171,12 +184,49 @@ test("IFC export service includes current robot missions", async () => {
   assert.equal(result.missionCount, 1);
   assert.equal(codec.missionInputs.length, 1);
   assert.equal(codec.missionInputs[0].sourceModelId, "building-model");
+  assert.deepEqual(codec.missionInputs[0].missions, [mission]);
   assert.equal(codec.missionInputs[0].graphs[0].missionId, mission.id);
   assert.ok(
     codec.missionInputs[0].graphs[0].records.some(
       (record) => record.entity === "IfcTask" && record.sourceId === task.id,
     ),
   );
+});
+
+/** An explicitly supplied empty collection authoritatively removes annotations. */
+test("IFC export service forwards an empty authoritative mission collection", async () => {
+  const registry = new IfcSourceModelRegistry();
+  const codec = new RecordingStructuralCodec();
+  registry.register({
+    modelId: "building-model",
+    fileName: "building.ifc",
+    bytes: sourceBytes,
+  });
+  const service = new IfcModelExportService(registry, codec);
+
+  const result = await service.exportModel("building-model", { missions: [] });
+
+  assert.equal(result.missionCount, 0);
+  assert.equal(codec.missionInputs.length, 1);
+  assert.deepEqual(codec.missionInputs[0].missions, []);
+  assert.deepEqual(codec.missionInputs[0].graphs, []);
+});
+
+/** An absent optional value must never be interpreted as destructive intent. */
+test("IFC export service does not delete missions for an undefined optional collection", async () => {
+  const registry = new IfcSourceModelRegistry();
+  const codec = new RecordingStructuralCodec();
+  registry.register({
+    modelId: "building-model",
+    fileName: "building.ifc",
+    bytes: sourceBytes,
+  });
+  const service = new IfcModelExportService(registry, codec);
+
+  await service.exportModel("building-model", { missions: undefined });
+
+  assert.deepEqual(codec.inputs, [sourceBytes]);
+  assert.deepEqual(codec.missionInputs, []);
 });
 
 /** Verifies that fragment-only models cannot produce misleading IFC downloads. */
